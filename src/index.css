@@ -1,0 +1,217 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Warmes Tiefdunkel (TRAUMAATLAS-Theme) */
+    --background: 24 22% 5%;
+    --foreground: 33 28% 92%;
+    --card: 26 18% 8%;
+    --card-foreground: 33 28% 92%;
+    --popover: 26 18% 8%;
+    --popover-foreground: 33 28% 92%;
+    --primary: 32 68% 62%;
+    --primary-foreground: 24 40% 8%;
+    --secondary: 26 14% 14%;
+    --secondary-foreground: 33 28% 92%;
+    --muted: 26 14% 14%;
+    --muted-foreground: 30 10% 62%;
+    --accent: 32 68% 62%;
+    --accent-foreground: 24 40% 8%;
+    --destructive: 0 55% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 28 12% 18%;
+    --input: 28 12% 18%;
+    --ring: 32 68% 62%;
+    --radius: 0.875rem;
+    --sidebar-background: 26 18% 7%;
+    --sidebar-foreground: 33 28% 92%;
+    --sidebar-primary: 32 68% 62%;
+    --sidebar-primary-foreground: 24 40% 8%;
+    --sidebar-accent: 26 14% 14%;
+    --sidebar-accent-foreground: 33 28% 92%;
+    --sidebar-border: 28 12% 18%;
+    --sidebar-ring: 32 68% 62%;
+  }
+
+  .dark {
+    --background: 24 22% 5%;
+    --foreground: 33 28% 92%;
+    --card: 26 18% 8%;
+    --card-foreground: 33 28% 92%;
+    --popover: 26 18% 8%;
+    --popover-foreground: 33 28% 92%;
+    --primary: 32 68% 62%;
+    --primary-foreground: 24 40% 8%;
+    --secondary: 26 14% 14%;
+    --secondary-foreground: 33 28% 92%;
+    --muted: 26 14% 14%;
+    --muted-foreground: 30 10% 62%;
+    --accent: 32 68% 62%;
+    --accent-foreground: 24 40% 8%;
+    --destructive: 0 55% 45%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 28 12% 18%;
+    --input: 28 12% 18%;
+    --ring: 32 68% 62%;
+    --sidebar-background: 26 18% 7%;
+    --sidebar-foreground: 33 28% 92%;
+    --sidebar-primary: 32 68% 62%;
+    --sidebar-primary-foreground: 24 40% 8%;
+    --sidebar-accent: 26 14% 14%;
+    --sidebar-accent-foreground: 33 28% 92%;
+    --sidebar-border: 28 12% 18%;
+    --sidebar-ring: 32 68% 62%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html {
+    scroll-behavior: smooth;
+  }
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+    background-image:
+      radial-gradient(1200px 700px at 75% -10%, rgba(226, 163, 92, 0.07), transparent 60%),
+      radial-gradient(900px 600px at 10% 110%, rgba(139, 147, 201, 0.06), transparent 60%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    background: rgba(226, 163, 92, 0.35);
+  }
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Glasflächen */
+  .glass {
+    @apply bg-white/[0.045] backdrop-blur-xl border border-white/10;
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+  .glass-soft {
+    @apply bg-white/[0.03] backdrop-blur-md border border-white/[0.07];
+  }
+
+  /* Typo */
+  .font-display {
+    font-family: "Fraunces Variable", "Fraunces", Georgia, serif;
+    font-optical-sizing: auto;
+  }
+  .font-body {
+    font-family: "Inter Variable", "Inter", system-ui, -apple-system, sans-serif;
+  }
+
+  /* Sanfte Einblendung für View-Wechsel */
+  .view-fade {
+    animation: view-fade 0.55s ease both;
+  }
+  @keyframes view-fade {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Dezentes Pulsieren (warm, nicht stroboskopisch) */
+  .pulse-soft {
+    animation: pulse-soft 3.2s ease-in-out infinite;
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 1; }
+  }
+
+  /* Volumetrie-Gefühl hinter 3D-Szenen */
+  .vignette::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(10, 7, 5, 0.55) 100%);
+  }
+
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+  /* ── TRAUMAATLAS 2 · Beziehungskosmos ───────────────────── */
+
+  /* Leuchtende Materie */
+  .glow-amber { color: #e2a35c; text-shadow: 0 0 18px rgba(226,163,92,0.55), 0 0 60px rgba(226,163,92,0.25); }
+  .glow-teal { color: #8fd8cf; text-shadow: 0 0 18px rgba(143,216,207,0.5), 0 0 60px rgba(143,216,207,0.22); }
+  .text-gradient-warm {
+    background: linear-gradient(105deg, #f3d9b0 0%, #e2a35c 45%, #c97b4a 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Kapitel-Hero mit Key Visual */
+  .chapter-hero {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .chapter-hero .hero-art {
+    position: absolute;
+    inset: 0;
+    z-index: -2;
+    background-size: cover;
+    background-position: center;
+    transform: scale(1.04);
+  }
+  .chapter-hero .hero-veil {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background:
+      linear-gradient(180deg, rgba(14,11,8,0.55) 0%, rgba(14,11,8,0.25) 40%, rgba(14,11,8,0.92) 100%),
+      radial-gradient(ellipse at 50% 0%, transparent 40%, rgba(14,11,8,0.5) 100%);
+  }
+  .hero-veil-static {
+    background:
+      linear-gradient(180deg, rgba(14,11,8,0.62) 0%, rgba(14,11,8,0.35) 40%, rgba(14,11,8,0.95) 100%) !important;
+  }
+
+  /* Feine Lichtlinie */
+  .hairline-glow {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(226,163,92,0.6), transparent);
+    box-shadow: 0 0 12px rgba(226,163,92,0.35);
+  }
+
+  /* Glas-Slide (Lexikon) */
+  .glass-slide {
+    background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+  }
+
+  /* Kanten-Label im Graph */
+  .edge-chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px];
+    border-color: rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.04);
+  }
+}
+
+/* Traumasensible Motion-Regel: ersetzt ALLES Bewegte durch statische Zustände */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .view-fade,
+  .pulse-soft {
+    animation: none !important;
+  }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
