@@ -125,6 +125,65 @@ function RegionMarkers({ step }: { step: number }) {
   );
 }
 
+/** Regions-Namen als Sprite-Label am aktiven Marker. */
+function RegionLabel({ step }: { step: number }) {
+  const spriteRef = useRef<THREE.Sprite>(null);
+  const active = STEP_REGIONS[Math.max(0, Math.min(5, step))];
+  const anchor = regionAnchors.find((a) => a.id === active[0]);
+  const label = useMemo(() => {
+    if (!anchor) return null;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d")!;
+    const font = "500 26px Inter, system-ui, sans-serif";
+    ctx.font = font;
+    const tw = Math.ceil(ctx.measureText(anchor.label).width);
+    canvas.width = (tw + 28) * 2;
+    canvas.height = 44 * 2;
+    const c = canvas.getContext("2d")!;
+    c.scale(2, 2);
+    c.font = font;
+    c.fillStyle = "rgba(10,8,6,0.72)";
+    c.beginPath();
+    c.roundRect(0, 2, tw + 28, 32, 10);
+    c.fill();
+    c.fillStyle = "#f3e7d3";
+    c.textBaseline = "middle";
+    c.fillText(anchor.label, 14, 19);
+    const tex = new THREE.CanvasTexture(canvas);
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }));
+    sp.scale.set((0.3 * canvas.width) / canvas.height, 0.3, 1);
+    sp.renderOrder = 12;
+    return sp;
+  }, [anchor]);
+  useEffect(() => {
+    if (spriteRef.current && label) spriteRef.current.material.map = label.material.map;
+  }, [label]);
+  useFrame((_, delta) => {
+    const sp = spriteRef.current;
+    if (!sp || !anchor) return;
+    sp.position.set(anchor.position[0] * 1.5 + 0.55, anchor.position[1] * 1.5 - 0.1, anchor.position[2] * 1.5 + 0.2);
+    sp.material.opacity += (0.95 - sp.material.opacity) * Math.min(1, delta * 5);
+  });
+  return <sprite ref={spriteRef} />;
+}
+
+/** Kamera-Regie: sanfte Dollys je Station (Nähe für Erstarrung, Weite für Überblick). */
+function CascadeCamera({ step }: { step: number }) {
+  const t = useRef(0);
+  const DIST = [6.2, 5.6, 5.2, 4.2, 5.4, 6.0];
+  const Y = [0.9, 1.0, 0.9, 0.5, 0.8, 0.8];
+  useFrame((state, delta) => {
+    t.current += delta;
+    const k = Math.max(0, Math.min(5, step));
+    const want = DIST[k] + Math.sin(t.current * 0.4) * 0.12;
+    const cam = state.camera;
+    cam.position.z += (want - cam.position.z) * Math.min(1, delta * 1.6);
+    cam.position.y += (Y[k] - cam.position.y) * Math.min(1, delta * 1.6);
+    cam.lookAt(0, 0.55, 0);
+  });
+  return null;
+}
+
 /** Rotierende, atmende Kaskaden-Bühne. */
 function CascadeStage({ step }: { step: number }) {
   const viz = STEP_VIZ[Math.max(0, Math.min(5, step))];
@@ -134,6 +193,8 @@ function CascadeStage({ step }: { step: number }) {
   });
   return (
     <group ref={group}>
+      <CascadeCamera step={step} />
+      <RegionLabel step={step} />
       <SilkBody
         scale={1.5}
         position={[0, -0.1, 0]}
@@ -231,6 +292,14 @@ export default function KaskadeView() {
         <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
           {/* Bühne */}
           <div className="vignette relative h-[62vh] min-h-[440px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]">
+            <motion.div
+              key={`tint-${info.id}`}
+              className="pointer-events-none absolute inset-0"
+              initial={false}
+              animate={{ background: `radial-gradient(ellipse at 50% 60%, ${info.color}14 0%, transparent 60%)` }}
+              transition={{ duration: 1.2 }}
+              aria-hidden="true"
+            />
             <WebGLGate
               className="absolute inset-0"
               camera={{ position: [0, 0.6, 5.8], fov: 45 }}
@@ -239,7 +308,23 @@ export default function KaskadeView() {
               <CascadeStage step={step} />
             </WebGLGate>
 
-            {/* Fortschritts-Timeline als leuchtender Pfad */}
+            {/* Stations-Titel als Overlay */}
+          <motion.div
+            key={info.id}
+            initial={reduced ? false : { opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="pointer-events-none absolute left-5 top-5"
+          >
+            <p className="text-[11px] uppercase tracking-[0.3em]" style={{ color: info.color }}>
+              Station {step + 1} von 6 · {info.time}
+            </p>
+            <h2 className="font-display mt-1 text-2xl text-[#f3e7d3]" style={{ textShadow: `0 0 24px ${info.color}66` }}>
+              {info.title}
+            </h2>
+          </motion.div>
+
+          {/* Fortschritts-Timeline als leuchtender Pfad */}
             <div className="absolute inset-x-6 bottom-4">
               <svg viewBox="0 0 600 46" className="w-full" aria-hidden="true">
                 <defs>

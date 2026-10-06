@@ -76,7 +76,7 @@ export function buildSimNodes(): SimNode[] {
     if (!groupLane.has(g)) groupLane.set(g, groupLane.size);
     const lane = groupLane.get(g)!;
     const x = ((n.data.year - minY) / (maxY - minY)) * 26 - 13;
-    const y = (lane - (groupLane.size - 1) / 2) * 2.4;
+    const y = (lane - (groupLane.size - 1) / 2) * 3.1;
     n.modePos.set(x, y, (lane % 2 === 0 ? 1 : -1) * 0.6);
   }
   // Knoten ohne Jahr: in die Seiten-„Aussenwelt" stellen
@@ -115,3 +115,42 @@ export function buildEdgeIndex(idToIndex: Map<string, number>): EdgeRef[] {
 }
 
 export type GraphMode = "constellation" | "stammbaum" | "thema";
+
+/** Kurzformen für lange Knotennamen (Labels im Graph). */
+const SHORT_NAMES: Record<string, string> = {
+  kvt: "KVT",
+  neopsychoanalyse: "Tiefenpsychologie",
+  erkson: "Erickson-Hypnose",
+  dissoziationstheorie: "Dissoziation",
+  herman: "Komplextrauma",
+  humanistisch: "Humanismus",
+  kognitivismus: "Kognitionswiss.",
+  aufklaerung: "Aufklärung",
+  gestalt: "Gestalt",
+  ethologie: "Ethologie",
+  neuro: "Neurowissenschaften",
+  "m:dbt": "DBT",
+  "m:tfcbt": "tf-KVT",
+  "m:egostate": "Teilearbeit / IFS",
+  "m:brainspotting": "Brainspotting",
+  "m:schematherapie": "Schematherapie",
+  "m:tsyoga": "Trauma-Yoga",
+  "m:polyvagal": "Polyvagal",
+  "m:sp": "Sensomotorik",
+  "m:se": "SE",
+  "m:net": "NET",
+  "m:irrt": "IRRT",
+  "m:pitt": "PITT",
+  "m:krst": "KReST",
+  "m:tre": "TRE",
+  "m:dbr": "DBR",
+  "m:narm": "NARM",
+  "m:emdr": "EMDR",
+};
+
+/** Anzeige-Label im Graph: Kurzform, sonst gekürzt. */
+export function shortLabel(id: string, label: string): string {
+  const s = SHORT_NAMES[id];
+  if (s) return s;
+  return label.length > 24 ? label.slice(0, 22) + "…" : label;
+}

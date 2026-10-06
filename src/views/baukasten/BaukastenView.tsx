@@ -9,6 +9,7 @@ import { methods } from "@/data/v1/methods";
 import { phaseInfos } from "@/data/nervous";
 import { methodSymptomsLocal } from "@/data/navigatorLinks";
 import { CHAPTERS } from "@/views/chapters";
+import { ITEM_IMAGES } from "./itemAssets";
 import { toggleProgramItem, useAtlasState } from "@/state/atlas-store";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
@@ -191,9 +192,10 @@ export default function BaukastenView() {
           {grouped.map(({ group, items }) => (
             <div key={group} className="glass-soft rounded-2xl p-4">
               <p className="mb-2.5 text-[10px] uppercase tracking-[0.25em] text-white/40">{group}</p>
-              <div className="flex max-h-48 flex-wrap content-start gap-2 overflow-y-auto scrollbar-thin">
+              <div className="grid max-h-64 grid-cols-2 content-start gap-2 overflow-y-auto scrollbar-thin sm:grid-cols-3">
                 {items.map((p) => {
                   const inProgram = program.includes(p.id);
+                  const img = ITEM_IMAGES[p.id];
                   return (
                     <motion.div
                       key={p.id}
@@ -202,24 +204,46 @@ export default function BaukastenView() {
                       dragSnapToOrigin
                       onDragStart={() => setDragging(p.id)}
                       onDragEnd={() => { setDragging(null); setOverPhase(null); }}
-                      whileDrag={reduced ? undefined : { scale: 1.08, zIndex: 30, boxShadow: `0 16px 44px rgba(0,0,0,0.55), 0 0 26px ${p.color}66` }}
-                      className={`flex cursor-grab items-center gap-2 rounded-xl border px-3 py-2 text-xs active:cursor-grabbing ${
-                        inProgram ? "border-white/[0.04] opacity-30" : "border-white/12 bg-white/[0.04]"
+                      whileDrag={reduced ? undefined : { scale: 1.06, zIndex: 30, boxShadow: `0 16px 44px rgba(0,0,0,0.6), 0 0 26px ${p.color}77` }}
+                      className={`group relative w-[150px] cursor-grab select-none overflow-hidden rounded-xl border active:cursor-grabbing ${
+                        inProgram ? "border-white/[0.04] opacity-30" : "border-white/12"
                       }`}
                       style={{ borderColor: inProgram ? undefined : `${p.color}55` }}
                     >
-                      <GripVertical className="h-3.5 w-3.5 text-white/25" aria-hidden />
-                      <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
-                      <span className="max-w-[190px] truncate text-white/80">{p.title}</span>
-                      {!inProgram && (
-                        <button
-                          onClick={() => toggleProgramItem(p.id)}
-                          aria-label={`${p.title} hinzufügen`}
-                          className="ml-1 rounded-full p-0.5 text-white/40 transition-colors hover:text-[#7fb8a4]"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                        </button>
+                      {img ? (
+                        <div className="relative h-[86px]">
+                          <img src={img} alt="" className="h-full w-full object-cover" draggable={false} />
+                          <div className="absolute inset-0 bg-gradient-to-t from-[#0e0b08] via-transparent to-transparent" />
+                          {!inProgram && (
+                            <button
+                              onClick={() => toggleProgramItem(p.id)}
+                              aria-label={`${p.title} hinzufügen`}
+                              className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white/80 backdrop-blur-sm transition-colors hover:text-[#7fb8a4]"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <GripVertical className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-white/50" aria-hidden />
+                        </div>
+                      ) : (
+                        <div className="relative flex h-[86px] items-center justify-center" style={{ background: `${p.color}14` }}>
+                          <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
+                          {!inProgram && (
+                            <button
+                              onClick={() => toggleProgramItem(p.id)}
+                              aria-label={`${p.title} hinzufügen`}
+                              className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white/80 backdrop-blur-sm transition-colors hover:text-[#7fb8a4]"
+                            >
+                              <Plus className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <GripVertical className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-white/40" aria-hidden />
+                        </div>
                       )}
+                      <div className="px-2 pb-1.5 pt-1">
+                        <p className="truncate text-[11px] leading-tight text-white/85">{p.title}</p>
+                        <p className="truncate text-[9px] text-white/40">{p.minutes ?? p.sub}</p>
+                      </div>
                     </motion.div>
                   );
                 })}
@@ -294,7 +318,11 @@ export default function BaukastenView() {
                         className="glass-slide flex items-center gap-2.5 rounded-xl px-3 py-2.5"
                         style={{ boxShadow: `0 6px 24px rgba(0,0,0,0.35), inset 3px 0 0 ${p.color}` }}
                       >
-                        <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
+                        {ITEM_IMAGES[p.id] ? (
+                          <img src={ITEM_IMAGES[p.id]} alt="" className="h-10 w-14 shrink-0 rounded-lg object-cover" draggable={false} />
+                        ) : (
+                          <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
+                        )}
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm text-[#f3e7d3]">{p.title}</span>
                           <span className="block truncate text-[10px] text-white/40">{p.sub}{p.minutes ? ` · ${p.minutes}` : ""}</span>

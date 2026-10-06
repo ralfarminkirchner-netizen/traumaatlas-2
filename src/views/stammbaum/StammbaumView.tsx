@@ -6,6 +6,11 @@ import { disciplines, groups, type DisciplineNode } from "@/data/v1/disciplines"
 import { methods } from "@/data/v1/methods";
 import { CHAPTERS } from "@/views/chapters";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import epAntike from "@/assets/gen/ep-antike.jpg";
+import epAufklaerung from "@/assets/gen/ep-aufklaerung.jpg";
+import epFreud from "@/assets/gen/ep-freud.jpg";
+import epNachkrieg from "@/assets/gen/ep-nachkrieg.jpg";
+import epHeute from "@/assets/gen/ep-heute.jpg";
 
 const chapter = CHAPTERS[5];
 
@@ -15,11 +20,11 @@ const W = 8600;
 const xOf = (year: number) => ((year - MIN_YEAR) / (MAX_YEAR - MIN_YEAR)) * W;
 
 const EPOCHS = [
-  { from: MIN_YEAR, to: 1800, label: "Antike & Frühzeit", line: "Seelenlehre, Philosophie, erste Systematik des Erlebens.", tint: "#8a7f6e" },
-  { from: 1800, to: 1900, label: "Aufklärung & Wissenschaft", line: "Empirismus, Experimentalpsychologie, Hypnoseforschung.", tint: "#9aa8c7" },
-  { from: 1900, to: 1945, label: "Freud, Krieg, Exil", line: "Psychoanalyse, Behaviorismus, Reichs Körperarbeit — im Schatten der Kriege.", tint: "#c98a8a" },
-  { from: 1945, to: 1990, label: "Nachkrieg & Körper", line: "Humanismus, KVT, Bioenergetik, Feldenkrais, Bindungsforschung.", tint: "#d9a05b" },
-  { from: 1990, to: MAX_YEAR, label: "Das Trauma-Zeitalter", line: "Polyvagal, EMDR, Komplextrauma-Forschung — das Nervensystem wird zur Karte.", tint: "#7fb8a4" },
+  { from: MIN_YEAR, to: 1800, label: "Antike & Frühzeit", line: "Seelenlehre, Philosophie, erste Systematik des Erlebens.", tint: "#8a7f6e", art: epAntike },
+  { from: 1800, to: 1900, label: "Aufklärung & Wissenschaft", line: "Empirismus, Experimentalpsychologie, Hypnoseforschung.", tint: "#9aa8c7", art: epAufklaerung },
+  { from: 1900, to: 1945, label: "Freud, Krieg, Exil", line: "Psychoanalyse, Behaviorismus, Reichs Körperarbeit — im Schatten der Kriege.", tint: "#c98a8a", art: epFreud },
+  { from: 1945, to: 1990, label: "Nachkrieg & Körper", line: "Humanismus, KVT, Bioenergetik, Feldenkrais, Bindungsforschung.", tint: "#d9a05b", art: epNachkrieg },
+  { from: 1990, to: MAX_YEAR, label: "Das Trauma-Zeitalter", line: "Polyvagal, EMDR, Komplextrauma-Forschung — das Nervensystem wird zur Karte.", tint: "#7fb8a4", art: epHeute },
 ];
 
 const discY = 380;
@@ -106,14 +111,29 @@ export default function StammbaumView() {
         return (
           <div
             key={e.label}
-            className="absolute inset-y-0"
+            className="absolute inset-y-0 overflow-hidden"
             style={{
               left: x0,
               width: w,
-              background: `linear-gradient(180deg, ${e.tint}14 0%, transparent 45%, ${e.tint}0a 100%)`,
               borderLeft: i === 0 ? undefined : "1px solid rgba(255,255,255,0.08)",
             }}
           >
+            {/* passender Epochen-Hintergrund, vollflächig */}
+            <div
+              className="absolute inset-0"
+              style={{
+                backgroundImage: `url(${e.art})`,
+                backgroundSize: "cover",
+                backgroundPosition: `${i === 0 ? "left" : i === EPOCHS.length - 1 ? "right" : "center"} center`,
+                opacity: 0.5,
+              }}
+              aria-hidden="true"
+            />
+            <div
+              className="absolute inset-0"
+              style={{ background: `linear-gradient(180deg, rgba(14,11,8,0.72) 0%, rgba(14,11,8,0.25) 40%, rgba(14,11,8,0.86) 100%)` }}
+              aria-hidden="true"
+            />
             <div className="absolute left-10 top-10">
               <p className="font-display text-6xl font-light" style={{ color: `${e.tint}55` }}>
                 {i + 1}

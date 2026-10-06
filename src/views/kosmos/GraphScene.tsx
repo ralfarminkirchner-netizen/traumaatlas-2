@@ -5,9 +5,10 @@ import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import {
-  EDGE_COLORS, buildEdgeIndex, buildSimNodes, clusterAnchor,
+  EDGE_COLORS, buildEdgeIndex, buildSimNodes, clusterAnchor, shortLabel,
   type GraphMode,
 } from "./layout";
+import { PORTRAITS, PORTRAIT_NODE_IDS } from "./nodeAssets";
 export type { GraphMode };
 
 export interface HoverInfo {
@@ -36,7 +37,7 @@ const tmpColor = new THREE.Color();
 const tmpObj = new THREE.Object3D();
 
 /** Knoten-Typen mit permanentem Namens-Label */
-const LABEL_TYPES = new Set(["discipline", "method", "state", "phase", "category"]);
+const LABEL_TYPES = new Set(["discipline", "method", "state"]);
 
 /** Canvas-Textur-Sprite für Knoten-Labels (keine Netzwerk-Abhängigkeit). */
 function makeLabelSprite(text: string): THREE.Sprite {
@@ -112,8 +113,27 @@ export const GraphScene = memo(function GraphScene({
   // ── Namens-Labels für zentrale Knotentypen ─────────────────
   const labels = useMemo(() => {
     const arr: (THREE.Sprite | null)[] = nodes.map((n) =>
-      LABEL_TYPES.has(n.data.type) ? makeLabelSprite(n.data.label) : null,
+      LABEL_TYPES.has(n.data.type) ? makeLabelSprite(shortLabel(n.data.id, n.data.label)) : null,
     );
+    return arr;
+  }, [nodes]);
+
+  // ── Porträt-Medaillons für Schlüsselpersönlichkeiten ──────
+  const portraits = useMemo(() => {
+    const loader = new THREE.TextureLoader();
+    const arr: (THREE.Sprite | null)[] = nodes.map((n) => {
+      if (!PORTRAIT_NODE_IDS.has(n.data.id)) return null;
+      const url = PORTRAITS[n.data.id];
+      if (!url) return null;
+      const tex = loader.load(url);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      const sprite = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }),
+      );
+      sprite.scale.set(1.05, 1.05, 1);
+      sprite.renderOrder = 9;
+      return sprite;
+    });
     return arr;
   }, [nodes]);
 
@@ -271,10 +291,14 @@ export const GraphScene = memo(function GraphScene({
       }
       let target = 1;
       if (mode === "thema" && themaSet && !themaSet.has(i)) target = 0.05;
+      // Stammbaum: jahrbasierte Knoten fokussieren, Rest fast unsichtbar
+      if (mode === "stammbaum" && nodes[i].data.year === undefined) target = Math.min(target, 0.05);
       if (lensActive) {
         const isLens = i === lensIdx;
         const isNeighbor = lensIdx !== undefined && adj[lensIdx].includes(i);
-        target = Math.min(target, isLens ? 1 : isNeighbor ? 0.85 : 0.12);
+        // Fokus: Umgebung bleibt lesbar (kein leerer Raum); Hover: stärkeres Dimmen
+        const rest = focusIdx !== undefined && !hoverId ? 0.32 : 0.12;
+        target = Math.min(target, isLens ? 1 : isNeighbor ? 0.95 : rest);
       }
       node.dim += (target - node.dim) * Math.min(1, delta * 6);
     }
@@ -283,7 +307,10 @@ export const GraphScene = memo(function GraphScene({
     for (let i = 0; i < nodes.length; i++) {
       const node = nodes[i];
       const boost = i === hoverIdx ? 1.7 : i === focusIdx ? 1.5 : 1;
-      const s = node.size * node.scaleNow * boost * (0.25 + 0.75 * node.dim);
+      const isPortrait = PORTRAIT_NODE_IDS.has(node.data.id);
+      const s = isPortrait
+        ? 0.0001
+        : node.size * node.scaleNow * boost * (0.25 + 0.75 * node.dim);
       tmpObj.position.copy(node.pos);
       tmpObj.scale.setScalar(Math.max(s, 0.001));
       tmpObj.updateMatrix();
@@ -303,6 +330,20 @@ export const GraphScene = memo(function GraphScene({
       sprite.position.set(node.pos.x, node.pos.y + node.size * boost + 0.34, node.pos.z);
       const vis = node.scaleNow > 0.9 ? Math.min(1, node.dim * 1.15) : 0;
       const mat = sprite.material as THREE.SpriteMaterial;
+      mat.opacity += (vis - mat.opacity) * Math.min(1, delta * 8);
+    }
+
+    // ── Porträt-Medaillons positionieren ───────────────────
+    for (let i = 0; i < nodes.length; i++) {
+      const sprite = portraits[i];
+      if (!sprite) continue;
+      const node = nodes[i];
+      const boost = i === hoverIdx ? 1.22 : i === focusIdx ? 1.18 : 1;
+      sprite.position.set(node.pos.x, node.pos.y, node.pos.z);
+      const sc = 1.05 * boost * (0.25 + 0.75 * node.dim) * Math.max(node.scaleNow, 0.001);
+      sprite.scale.set(sc, sc, 1);
+      const mat = sprite.material as THREE.SpriteMaterial;
+      const vis = node.scaleNow > 0.9 ? Math.min(1, node.dim * 1.2) : 0;
       mat.opacity += (vis - mat.opacity) * Math.min(1, delta * 8);
     }
 
@@ -345,7 +386,8 @@ export const GraphScene = memo(function GraphScene({
         tmpV2.copy(nodes[lensIdx].pos);
         controls.target.lerp(tmpV2, Math.min(1, delta * 4));
         tmpV.subVectors(camera.position, controls.target);
-        const want = 4.2;
+        const deg = adj[lensIdx]?.length ?? 0;
+        const want = 4.0 + Math.max(0, 1 - Math.min(deg, 8) / 8) * 3.4;
         if (tmpV.length() > want) {
           tmpV.setLength(tmpV.length() + (want - tmpV.length()) * Math.min(1, delta * 3));
           camera.position.copy(controls.target).add(tmpV);
@@ -493,6 +535,7 @@ export const GraphScene = memo(function GraphScene({
 
       <group>
         {labels.map((s, i) => (s ? <primitive key={i} object={s} /> : null))}
+        {portraits.map((s, i) => (s ? <primitive key={`p${i}`} object={s} /> : null))}
       </group>
 
       <OrbitControls
