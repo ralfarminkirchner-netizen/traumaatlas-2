@@ -1,0 +1,15 @@
+{
+  "freud":  { "type": "photo", "file": "Sigmund Freud, by Max Halberstadt (cropped).jpg", "source": "https://commons.wikimedia.org/wiki/File:Sigmund_Freud,_by_Max_Halberstadt_(cropped).jpg", "license": "Public domain" },
+  "jung":   { "type": "photo", "file": "CGJung.jpg", "source": "https://commons.wikimedia.org/wiki/File:CGJung.jpg", "license": "Public domain" },
+  "wundt":  { "type": "photo", "file": "W. Wundt (cropped).jpg", "source": "https://commons.wikimedia.org/wiki/File:W._Wundt_(cropped).jpg", "license": "Public domain" },
+  "reich":  { "type": "photo", "file": "Wilhelm Reich.jpg", "source": "https://commons.wikimedia.org/wiki/File:Wilhelm_Reich.jpg", "license": "Public domain" },
+  "rogers": { "type": "photo", "file": "Carl Rogers, 1947 president of the APA.jpg", "source": "https://commons.wikimedia.org/wiki/File:Carl_Rogers,_1947_president_of_the_APA.jpg", "license": "CC0" },
+  "vanderkolk": { "type": "photo", "file": "Bessel van der Kolk 2022.jpg", "source": "https://commons.wikimedia.org/wiki/File:Bessel_van_der_Kolk_2022.jpg", "license": "CC BY 3.0" },
+  "adler":  { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "bowlby": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "levine": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "shapiro":{ "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "porges": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "herman": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
+  "linehan":{ "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" }
+}

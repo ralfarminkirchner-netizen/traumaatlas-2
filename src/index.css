@@ -206,7 +206,8 @@
     scroll-behavior: auto;
   }
   .view-fade,
-  .pulse-soft {
+  .pulse-soft,
+  .ta3-door {
     animation: none !important;
   }
   *, *::before, *::after {
@@ -214,4 +215,24 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ── TRAUMAATLAS 3 · Das Meer der Phänomene ───────────────── */
+
+/* Stille Tür: glimmt nur bei ruhiger Hand (Lexikon-Insel) */
+@keyframes ta3-door {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* Meer-Stage darf den Viewport exakt füllen */
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Scrollbereich der Kapitel-Bühne */
+.ta3-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(226, 163, 92, 0.25) transparent;
 }
