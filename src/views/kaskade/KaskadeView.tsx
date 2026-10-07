@@ -3,10 +3,8 @@ import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Pause, Play } from "lucide-react";
-import { ChapterHero } from "@/components/ChapterHero";
-import { Disclaimer } from "@/components/Disclaimer";
-import { stressCascade, bodyRegions, nervousStates } from "@/data/nervous";
-import { regionAnchors } from "@/data/body3d";
+import { stressCascade, nervousStates } from "@/data/nervous";
+import { bodyRegions } from "@/data/nervous";
 import { exercises } from "@/data/v1/exercises";
 import { methods } from "@/data/v1/methods";
 import { CHAPTERS } from "@/views/chapters";
@@ -81,92 +79,6 @@ function ReleaseSparks({ active }: { active: boolean }) {
   );
 }
 
-/** Körperregionen, die je Station aktiv aufleuchten (Positionen aus body3d). */
-const STEP_REGIONS: string[][] = [
-  ["kopf"],
-  ["kopf", "hals"],
-  ["brust", "schultern", "hals"],
-  ["bauch", "becken"],
-  ["schultern", "becken"],
-  ["bauch"],
-];
-
-/** Leuchtende Region-Marker auf der Körperform. */
-function RegionMarkers({ step }: { step: number }) {
-  const refs = useRef(new Map<string, THREE.Mesh>());
-  const active = new Set(STEP_REGIONS[Math.max(0, Math.min(5, step))]);
-  const color = STEP_VIZ[Math.max(0, Math.min(5, step))].colA;
-  useFrame((state) => {
-    const t = state.clock.elapsedTime;
-    for (const a of regionAnchors) {
-      const m = refs.current.get(a.id);
-      if (!m) continue;
-      const on = active.has(a.id);
-      const mat = m.material as THREE.MeshBasicMaterial;
-      const target = on ? 0.85 : 0.12;
-      mat.opacity += (target - mat.opacity) * 0.08;
-      const s = (on ? 1.15 + Math.sin(t * 2.4) * 0.18 : 1) * a.radius * 1.5;
-      m.scale.setScalar(Math.max(s, 0.01));
-    }
-  });
-  return (
-    <group>
-      {regionAnchors.map((a) => (
-        <mesh
-          key={a.id}
-          ref={(el) => { if (el) refs.current.set(a.id, el); }}
-          position={[a.position[0] * 1.5, a.position[1] * 1.5 - 0.1, a.position[2] * 1.5 + 0.15]}
-        >
-          <sphereGeometry args={[1, 16, 16]} />
-          <meshBasicMaterial color={color} transparent opacity={0.12} depthWrite={false} blending={THREE.AdditiveBlending} />
-        </mesh>
-      ))}
-    </group>
-  );
-}
-
-/** Regions-Namen als Sprite-Label am aktiven Marker. */
-function RegionLabel({ step }: { step: number }) {
-  const spriteRef = useRef<THREE.Sprite>(null);
-  const active = STEP_REGIONS[Math.max(0, Math.min(5, step))];
-  const anchor = regionAnchors.find((a) => a.id === active[0]);
-  const label = useMemo(() => {
-    if (!anchor) return null;
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d")!;
-    const font = "500 26px Inter, system-ui, sans-serif";
-    ctx.font = font;
-    const tw = Math.ceil(ctx.measureText(anchor.label).width);
-    canvas.width = (tw + 28) * 2;
-    canvas.height = 44 * 2;
-    const c = canvas.getContext("2d")!;
-    c.scale(2, 2);
-    c.font = font;
-    c.fillStyle = "rgba(10,8,6,0.72)";
-    c.beginPath();
-    c.roundRect(0, 2, tw + 28, 32, 10);
-    c.fill();
-    c.fillStyle = "#f3e7d3";
-    c.textBaseline = "middle";
-    c.fillText(anchor.label, 14, 19);
-    const tex = new THREE.CanvasTexture(canvas);
-    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }));
-    sp.scale.set((0.3 * canvas.width) / canvas.height, 0.3, 1);
-    sp.renderOrder = 12;
-    return sp;
-  }, [anchor]);
-  useEffect(() => {
-    if (spriteRef.current && label) spriteRef.current.material.map = label.material.map;
-  }, [label]);
-  useFrame((_, delta) => {
-    const sp = spriteRef.current;
-    if (!sp || !anchor) return;
-    sp.position.set(anchor.position[0] * 1.5 + 0.55, anchor.position[1] * 1.5 - 0.1, anchor.position[2] * 1.5 + 0.2);
-    sp.material.opacity += (0.95 - sp.material.opacity) * Math.min(1, delta * 5);
-  });
-  return <sprite ref={spriteRef} />;
-}
-
 /** Kamera-Regie: sanfte Dollys je Station (Nähe für Erstarrung, Weite für Überblick). */
 function CascadeCamera({ step }: { step: number }) {
   const t = useRef(0);
@@ -194,7 +106,6 @@ function CascadeStage({ step }: { step: number }) {
   return (
     <group ref={group}>
       <CascadeCamera step={step} />
-      <RegionLabel step={step} />
       <SilkBody
         scale={1.5}
         position={[0, -0.1, 0]}
@@ -206,7 +117,6 @@ function CascadeStage({ step }: { step: number }) {
       />
       {/* innere Glut */}
       <SilkBody scale={0.85} position={[0, -0.1, 0]} speed={viz.speed * 0.7} frost={viz.frost} glow={viz.glow * 0.7} colorA="#f3d9b0" colorB={viz.colB} rotationSpeed={-0.1} />
-      <RegionMarkers step={step} />
       <ReleaseSparks active={step === 4} />
     </group>
   );
@@ -286,12 +196,15 @@ export default function KaskadeView() {
 
   return (
     <div>
-      <ChapterHero art={chapter.art} kicker={chapter.kicker} title={chapter.title} sub={chapter.sub} index={chapter.index} />
+      <p className="mb-3 max-w-3xl text-sm leading-relaxed text-white/55">
+        {chapter.sub} Sechs Stationen einer überlebten Sekunde — als rein formale Choreografie:
+        Flüssigkeit, Frost, Entladung. Die Form sagt es selbst.
+      </p>
 
-      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8" aria-label="Die sechs Stationen der Stresskaskade">
-        <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
-          {/* Bühne */}
-          <div className="vignette relative h-[62vh] min-h-[440px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]">
+      <section className="w-full px-1 py-2" aria-label="Die sechs Stationen der Stresskaskade">
+        <div className="grid gap-4 lg:grid-cols-[1fr_330px]">
+          {/* Bühne — VOLLE Bühne */}
+          <div className="vignette relative h-[76vh] min-h-[520px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]">
             <motion.div
               key={`tint-${info.id}`}
               className="pointer-events-none absolute inset-0"
@@ -365,9 +278,9 @@ export default function KaskadeView() {
             </div>
           </div>
 
-          {/* Stations-Seitenleiste */}
-          <div className="flex flex-col">
-            <ol className="flex-1 space-y-1.5" aria-label="Stationen">
+          {/* Stations-Spalte: Auswahl, Wiedergabe und Text als Detail */}
+          <div className="flex min-h-0 flex-col gap-3">
+            <ol className="space-y-1.5" aria-label="Stationen">
               {stressCascade.map((s, i) => {
                 const active = i === step;
                 return (
@@ -401,7 +314,7 @@ export default function KaskadeView() {
               })}
             </ol>
 
-            <div className="mt-4 flex items-center gap-2">
+            <div className="mt-2 flex items-center gap-2">
               <button
                 onClick={() => setStep(step <= 0 ? 5 : step - 1)}
                 aria-label="Vorherige Station"
@@ -427,27 +340,23 @@ export default function KaskadeView() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
-          </div>
-        </div>
 
-        {/* Stations-Text */}
-        <motion.div
-          key={info.id}
-          initial={reduced ? false : { opacity: 0, y: 14 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          className="glass mt-6 rounded-2xl p-6"
-        >
-          <div className="flex flex-wrap items-center gap-3">
-            <h2 className="font-display text-2xl" style={{ color: info.color }}>{info.title}</h2>
-            <span className="edge-chip text-white/50">{info.time}</span>
+            {/* Stations-Text als Detail in der Spalte */}
+            <motion.div
+              key={info.id}
+              initial={reduced ? false : { opacity: 0, y: 14 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+              className="glass rounded-2xl p-4"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="font-display text-lg" style={{ color: info.color }}>{info.title}</h2>
+                <span className="edge-chip text-white/50">{info.time}</span>
+              </div>
+              <p className="mt-2 text-[13px] leading-relaxed text-white/75">{info.body}</p>
+              <StationHelp nervous={info.nervous} />
+            </motion.div>
           </div>
-          <p className="mt-3 max-w-3xl text-base leading-relaxed text-white/75">{info.body}</p>
-          <StationHelp nervous={info.nervous} />
-        </motion.div>
-
-        <div className="mt-8">
-          <Disclaimer />
         </div>
       </section>
     </div>

@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { GitFork, Orbit, Play, RotateCcw, Table2, Waypoints } from "lucide-react";
-import { ChapterHero } from "@/components/ChapterHero";
-import { Disclaimer } from "@/components/Disclaimer";
 import { edgeTypeLabels, nodeTypeMeta, type EdgeType, type NodeType } from "@/data/graph";
 import { methods } from "@/data/v1/methods";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
@@ -12,6 +10,7 @@ import { GraphFallback } from "./GraphFallback";
 import { NodeCard } from "./NodeCard";
 import { HERO } from "@/views/chapters";
 import { EDGE_COLORS } from "./layout";
+import { PORTRAIT_CREDITS } from "./nodeAssets";
 
 const MODES: { id: GraphMode; label: string; icon: React.ReactNode }[] = [
   { id: "constellation", label: "Konstellation", icon: <Orbit className="h-3.5 w-3.5" aria-hidden /> },
@@ -44,15 +43,12 @@ export default function KosmosView() {
 
   return (
     <div>
-      <ChapterHero
-        art={HERO.kosmos.art}
-        kicker="Kapitel 01 · Herzstück"
-        title={HERO.kosmos.title}
-        sub={`${HERO.kosmos.sub} Zoomen Sie durch den Kosmos, berühren Sie Knoten mit der Maus, klicken Sie für die Detailkarte.`}
-        index="01"
-      />
+      <section className="w-full px-1 py-2" aria-label="Der große Graph">
+        <p className="mb-3 max-w-3xl text-sm leading-relaxed text-white/55">
+          {HERO.kosmos.sub} Zoomen Sie durch den Kosmos, berühren Sie Knoten, klicken Sie für die Detailkarte.
+          Porträts zeigen echte, gemeinfreie Fotos — wo kein freies Foto existiert, eine gekennzeichnete künstlerische Darstellung.
+        </p>
 
-      <section className="mx-auto max-w-6xl px-5 py-10 sm:px-8" aria-label="Der große Graph">
         {/* Steuerung */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div role="group" aria-label="Graph-Modus" className="flex rounded-xl border border-white/10 bg-white/[0.03] p-1">
@@ -138,8 +134,8 @@ export default function KosmosView() {
           ))}
         </div>
 
-        {/* Graph-Bühne */}
-        <div className="vignette relative h-[72vh] min-h-[460px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]">
+        {/* Graph-Bühne: VOLLE Bühne */}
+        <div className="vignette relative h-[76vh] min-h-[520px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]">
           <WebGLGate
             className="absolute inset-0"
             fallback={
@@ -219,9 +215,20 @@ export default function KosmosView() {
           )}
         </AnimatePresence>
 
-        <div className="mt-8">
-          <Disclaimer />
-        </div>
+        {/* Porträt-Credits */}
+        <details className="mt-6 rounded-2xl glass-soft p-4">
+          <summary className="cursor-pointer text-xs uppercase tracking-[0.25em] text-white/45 hover:text-white/70">
+            Bildquellen der Porträts
+          </summary>
+          <ul className="mt-3 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+            {PORTRAIT_CREDITS.map((c) => (
+              <li key={c.id} className="flex items-baseline justify-between gap-3 text-[12px] text-white/55">
+                <span className="text-white/75">{c.name}</span>
+                <span className="text-right text-white/40">{c.source} · {c.license}</span>
+              </li>
+            ))}
+          </ul>
+        </details>
       </section>
     </div>
   );

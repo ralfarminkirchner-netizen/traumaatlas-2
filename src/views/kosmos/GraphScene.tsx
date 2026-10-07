@@ -118,19 +118,47 @@ export const GraphScene = memo(function GraphScene({
     return arr;
   }, [nodes]);
 
-  // ── Porträt-Medaillons für Schlüsselpersönlichkeiten ──────
+  // ── Porträt-Medaillons: rund, frontal, ohne Box oder Rahmen ──
   const portraits = useMemo(() => {
-    const loader = new THREE.TextureLoader();
     const arr: (THREE.Sprite | null)[] = nodes.map((n) => {
       if (!PORTRAIT_NODE_IDS.has(n.data.id)) return null;
       const url = PORTRAITS[n.data.id];
       if (!url) return null;
-      const tex = loader.load(url);
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d")!;
+      const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
+      const img = new Image();
+      img.onload = () => {
+        const r = size / 2;
+        ctx.clearRect(0, 0, size, size);
+        ctx.beginPath();
+        ctx.arc(r, r, r - 2, 0, Math.PI * 2);
+        ctx.save();
+        ctx.clip();
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        // ruhige, warme Tönung für einheitliche Bildsprache
+        ctx.fillStyle = "rgba(52, 36, 20, 0.16)";
+        ctx.fillRect(0, 0, size, size);
+        ctx.restore();
+        // ein einziger feiner Lichtring — keine Box, kein Sprite-Rahmen
+        ctx.beginPath();
+        ctx.arc(r, r, r - 3, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(232, 201, 160, 0.55)";
+        ctx.lineWidth = 3;
+        ctx.stroke();
+        tex.needsUpdate = true;
+      };
+      img.src = url;
       const sprite = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }),
       );
-      sprite.scale.set(1.05, 1.05, 1);
+      sprite.scale.set(1.18, 1.18, 1);
       sprite.renderOrder = 9;
       return sprite;
     });
@@ -340,7 +368,7 @@ export const GraphScene = memo(function GraphScene({
       const node = nodes[i];
       const boost = i === hoverIdx ? 1.22 : i === focusIdx ? 1.18 : 1;
       sprite.position.set(node.pos.x, node.pos.y, node.pos.z);
-      const sc = 1.05 * boost * (0.25 + 0.75 * node.dim) * Math.max(node.scaleNow, 0.001);
+      const sc = 1.18 * boost * (0.25 + 0.75 * node.dim) * Math.max(node.scaleNow, 0.001);
       sprite.scale.set(sc, sc, 1);
       const mat = sprite.material as THREE.SpriteMaterial;
       const vis = node.scaleNow > 0.9 ? Math.min(1, node.dim * 1.2) : 0;

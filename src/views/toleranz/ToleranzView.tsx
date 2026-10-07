@@ -2,8 +2,6 @@ import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { motion } from "framer-motion";
-import { ChapterHero } from "@/components/ChapterHero";
-import { Disclaimer } from "@/components/Disclaimer";
 import { windowOfTolerance } from "@/data/nervous";
 import { exercises } from "@/data/v1/exercises";
 import { CHAPTERS } from "@/views/chapters";
@@ -13,97 +11,143 @@ import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 const chapter = CHAPTERS[2];
 
-const bandVertex = /* glsl */ `
-  uniform float uTime;
-  uniform float uBend;     // -1..1 Erregung
-  varying float vY;
-  varying float vX;
-  void main() {
-    vec3 p = position;
-    float wave = sin(p.x * 0.55 + uTime * 0.7) * 0.28 + sin(p.x * 1.3 - uTime * 0.4) * 0.1;
-    // verbiegbares Band: Gauß-Verformung um die Mitte
-    float g = exp(-p.x * p.x * 0.06);
-    float bend = uBend * 2.6 * g;
-    p.z += wave * (1.0 - abs(uBend) * 0.45) + bend;
-    vY = p.z;
-    vX = position.x;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
-  }
-`;
+/* ── Relief-Landschaft ──────────────────────────────────────────────────────
+   Plastisches Terrain mit echter Beleuchtung: Die Lichtkugel rollt über das
+   Relief und wirft Schatten. Zonen lesen sich als Höhen (Hyper), weiche
+   Mitte (Fenster) und Tiefe (Hypo) — dazwischen Nebel.                    */
 
-const bandFragment = /* glsl */ `
-  uniform float uBend;
-  varying float vY;
-  varying float vX;
-  void main() {
-    vec3 hypo = vec3(0.545, 0.576, 0.788);   // #8b93c9
-    vec3 mid  = vec3(0.498, 0.722, 0.643);   // #7fb8a4
-    vec3 hyper= vec3(0.886, 0.639, 0.361);   // #e2a35c
-    float t = clamp(uBend * 1.4, -1.0, 1.0);
-    vec3 col = t < 0.0 ? mix(mid, hypo, -t) : mix(mid, hyper, t);
-    float glow = 0.5 + vY * 0.35;
-    float edge = smoothstep(6.0, 5.2, abs(vX)); // Ränder ausblenden
-    // Zonen-Rand: links Hypo, rechts Hyper — je nach Biegerichtung leuchten
-    float rim = smoothstep(4.6, 5.9, abs(vX));
-    vec3 rimCol = t < 0.0 ? hypo : hyper;
-    float rimStrength = rim * abs(t) * 0.9;
-    col = mix(col, rimCol, rimStrength);
-    gl_FragColor = vec4(col * glow, 0.85 * edge);
-  }
-`;
+const SEG_X = 130;
+const SEG_Z = 72;
+const W = 16;
+const D = 9;
 
-/** Verformbare 3D-Fläche + rollende Lichtkugel. */
-function BandStage({ arousal }: { arousal: number }) {
-  const matRef = useRef<THREE.ShaderMaterial>(null);
+/** weiche Rampe zwischen a und b (funktioniert in beide Richtungen) */
+function ss(a: number, b: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+const ZONE_COLORS = {
+  hypo: new THREE.Color("#5e6a99"),
+  window: new THREE.Color("#6f9c86"),
+  hyper: new THREE.Color("#b97a3e"),
+};
+
+/** Höhenfunktion des Reliefs: x quer (Erregungsachse), z in die Tiefe. */
+function heightAt(x: number, z: number, t: number, time: number): number {
+  const hyper = Math.max(t, 0);
+  const hypo = Math.max(-t, 0);
+  // Hyper-Kamm rechts: Höhen wachsen mit Überflutung
+  const ridge = ss(1.4, 7.4, x) * (0.55 + hyper * 3.4);
+  // Hypo-Becken links: Tiefe wächst mit Erstarrung
+  const trench = ss(-1.4, -7.4, x) * (0.55 + hypo * 3.4);
+  // weiche Mitte: das Fenster als ruhige Anhöhe
+  const mound = 0.55 * Math.exp(-(x * x) / 3.0) * (1 - Math.abs(t) * 0.45);
+  // feine Struktur — am Rande lebendig, im Fenster still
+  const mask = 1 - Math.exp(-(x * x) / 2.6);
+  const amp = (0.16 + Math.abs(t) * 1.35) * (0.25 + 0.75 * mask);
+  const n =
+    Math.sin(x * 1.6 + time * 0.32) * Math.cos(z * 1.25 - time * 0.21) * 0.55 +
+    Math.sin(x * 3.05 - time * 0.14) * Math.sin(z * 2.1 + time * 0.17) * 0.3;
+  return ridge - trench + mound + n * amp;
+}
+
+function ReliefStage({ arousal }: { arousal: number }) {
+  const meshRef = useRef<THREE.Mesh>(null);
   const ballRef = useRef<THREE.Mesh>(null);
+  const tRef = useRef(0);
+  const timeRef = useRef(0);
   const reduced = useReducedMotion();
 
-  const uniforms = useMemo(
-    () => ({ uTime: { value: 0 }, uBend: { value: 0 } }),
-    [],
-  );
-  const geometry = useMemo(() => new THREE.PlaneGeometry(12, 5.2, 160, 40), []);
-  const ballColor = useMemo(() => new THREE.Color("#ffe9c4"), []);
+  const geometry = useMemo(() => {
+    const g = new THREE.PlaneGeometry(W, D, SEG_X, SEG_Z);
+    g.rotateX(-Math.PI / 2); // y = Höhe
+    return g;
+  }, []);
+  const baseXZ = useMemo(() => {
+    const pos = geometry.attributes.position;
+    const arr = new Float32Array(pos.count * 2);
+    for (let i = 0; i < pos.count; i++) {
+      arr[i * 2] = pos.getX(i);
+      arr[i * 2 + 1] = pos.getZ(i);
+    }
+    return arr;
+  }, [geometry]);
 
-  useFrame((state, delta) => {
-    const mat = matRef.current;
-    if (!mat) return;
-    if (!reduced) mat.uniforms.uTime.value += delta;
-    mat.uniforms.uBend.value += (arousal - mat.uniforms.uBend.value) * Math.min(1, delta * 4);
+  // Zonen-Farben je Vertex (statisch, nach Position auf der Erregungsachse)
+  useMemo(() => {
+    const pos = geometry.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const x = baseXZ[i * 2];
+      if (x < -1.4) c.copy(ZONE_COLORS.window).lerp(ZONE_COLORS.hypo, ss(-1.4, -6.5, x));
+      else if (x > 1.4) c.copy(ZONE_COLORS.window).lerp(ZONE_COLORS.hyper, ss(1.4, 6.5, x));
+      else c.copy(ZONE_COLORS.window);
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  }, [geometry, baseXZ]);
 
-    // Lichtkugel rollt auf dem Band
+  useFrame((_state, delta) => {
+    const mesh = meshRef.current;
+    if (!mesh) return;
+    if (!reduced) timeRef.current += delta;
+    // weiches Nachlaufen der Erregung — Trägheit des Geländes
+    tRef.current += (arousal - tRef.current) * Math.min(1, delta * 3.2);
+    const t = tRef.current;
+    const time = timeRef.current;
+
+    const pos = geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      const x = baseXZ[i * 2];
+      const z = baseXZ[i * 2 + 1];
+      pos.setY(i, heightAt(x, z, t, time));
+    }
+    pos.needsUpdate = true;
+    geometry.computeVertexNormals();
+
+    // Lichtkugel rollt dem Erregungswert hinterher und WIRFT SICHTBARE SCHATTEN
     const ball = ballRef.current;
     if (ball) {
-      const b = mat.uniforms.uBend.value;
-      const t = state.clock.elapsedTime;
-      const x = b * 4.6;
-      const wave = Math.sin(x * 0.55 + (reduced ? 0 : t) * 0.7) * 0.28 + Math.sin(x * 1.3 - (reduced ? 0 : t) * 0.4) * 0.1;
-      const g = Math.exp(-x * x * 0.06);
-      ball.position.set(x, wave * (1 - Math.abs(b) * 0.45) + b * 2.6 * g + 0.28, 0.0);
-      ball.rotation.z -= delta * (0.6 + Math.abs(b) * 3) * Math.sign(b || 1);
+      const bx = Math.max(-6.8, Math.min(6.8, t * 6.2));
+      const by = heightAt(bx, 0, t, time) + 0.5;
+      ball.position.set(bx, by, 0);
+      ball.rotation.z -= delta * (0.4 + Math.abs(t) * 2.4) * Math.sign(t || 1);
     }
   });
 
   return (
-    <group rotation={[-0.5, 0, 0]}>
-      <mesh geometry={geometry}>
-        <shaderMaterial
-          ref={matRef}
-          vertexShader={bandVertex}
-          fragmentShader={bandFragment}
-          uniforms={uniforms}
-          transparent
-          side={THREE.DoubleSide}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
+    <>
+      <ambientLight intensity={0.32} color="#8a93b8" />
+      <hemisphereLight args={["#3a3324", "#0a0806", 0.5]} />
+      <mesh ref={meshRef} geometry={geometry} receiveShadow castShadow position={[0, -0.4, 0]}>
+        <meshStandardMaterial vertexColors roughness={0.94} metalness={0.04} />
+      </mesh>
+
+      {/* die Lichtkugel: warm, leuchtend, schattenwerfend */}
+      <mesh ref={ballRef} castShadow>
+        <sphereGeometry args={[0.34, 28, 28]} />
+        <meshStandardMaterial
+          color="#ffe9c4"
+          emissive="#ffca7a"
+          emissiveIntensity={2.6}
+          toneMapped={false}
+        />
+        <pointLight
+          color="#ffd9a0"
+          intensity={90}
+          distance={16}
+          decay={1.8}
+          castShadow
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
+          shadow-bias={-0.002}
         />
       </mesh>
-      <mesh ref={ballRef}>
-        <sphereGeometry args={[0.26, 24, 24]} />
-        <meshBasicMaterial color={ballColor} toneMapped={false} transparent opacity={0.95} />
-      </mesh>
-      <pointLight position={[0, 3, 4]} intensity={30} color="#e2a35c" />
-    </group>
+    </>
   );
 }
 
@@ -156,24 +200,26 @@ function ZoneHelp({ arousal, reduced }: { arousal: number; reduced: boolean }) {
   );
 }
 
-/** Statischer Ersatz: zweidimensionales Band als SVG. */
-function BandFallback({ arousal }: { arousal: number }) {
+/** Statischer Ersatz: Relief-Silhouette als SVG mit Lichtpunkt. */
+function ReliefFallback({ arousal }: { arousal: number }) {
   const pts = useMemo(() => {
     const arr: string[] = [];
     for (let i = 0; i <= 80; i++) {
-      const x = -10 + (i / 80) * 20;
-      const g = Math.exp(-x * x * 0.06);
-      const y = -arousal * 6 * g;
-      arr.push(`${(x + 12) * 25},${160 + y * 12}`);
+      const x = -8 + (i / 80) * 16;
+      const y = heightAt(x, 0, arousal, 0);
+      arr.push(`${(x + 8) * 37.5},${170 - y * 34}`);
     }
     return arr.join(" ");
   }, [arousal]);
-  const color = arousal < -0.35 ? "#8b93c9" : arousal > 0.35 ? "#e2a35c" : "#7fb8a4";
+  const zone = arousal < -0.35 ? "#8b93c9" : arousal > 0.35 ? "#e2a35c" : "#7fb8a4";
   return (
     <div className="flex h-full items-center justify-center p-6">
-      <svg viewBox="0 0 600 320" className="w-full max-w-xl" role="img" aria-label={`Wellenband, Erregung ${arousal.toFixed(2)}`}>
-        <polyline points={pts} fill="none" stroke={color} strokeWidth="3" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 10px ${color})` }} />
-        <circle cx={12 * 25 + arousal * 4.6 * 25} cy={160 - arousal * 6 * 12} r="10" fill="#ffe9c4" />
+      <svg viewBox="0 0 600 320" className="w-full max-w-2xl" role="img" aria-label={`Relief-Landschaft, Erregung ${arousal.toFixed(2)}`}>
+        <polyline points={pts} fill="none" stroke={zone} strokeWidth="3" strokeLinecap="round" style={{ filter: `drop-shadow(0 0 12px ${zone})` }} />
+        <circle cx={8 * 37.5 + arousal * 6.2 * 37.5} cy={170 - heightAt(Math.max(-6.8, Math.min(6.8, arousal * 6.2)), 0, arousal, 0) * 34} r="11" fill="#ffe9c4" style={{ filter: "drop-shadow(0 0 14px rgba(255,233,196,0.9))" }} />
+        <text x="60" y="290" fontSize="11" fill="#8b93c9">Hypo · Tiefe</text>
+        <text x="300" y="290" fontSize="11" fill="#7fb8a4" textAnchor="middle">Fenster</text>
+        <text x="540" y="290" fontSize="11" fill="#e2a35c" textAnchor="end">Hyper · Höhe</text>
       </svg>
     </div>
   );
@@ -188,8 +234,8 @@ function EvaluationCard({ arousal, history }: { arousal: number; history: number
     hyper: { color: "#e2a35c", title: windowOfTolerance.high, body: "Das Nervensystem ist im Alarm: Unruhe, Herzrasen, Überflutung. Beruhigende Übungen (langes Ausatmen, Erdung) führen zurück ins Fenster." },
   }[zone];
 
-  const W = 260;
-  const x = (v: number) => W / 2 + v * (W / 2 - 14);
+  const W2 = 260;
+  const x = (v: number) => W2 / 2 + v * (W2 / 2 - 14);
 
   return (
     <motion.div
@@ -201,14 +247,14 @@ function EvaluationCard({ arousal, history }: { arousal: number; history: number
     >
       <p className="text-[10px] uppercase tracking-[0.25em] text-white/40">Auswertung</p>
       <svg viewBox="0 0 260 84" className="mt-3 w-full" role="img" aria-label={`Erregungs-Messung: ${meta.title}`}>
-        <rect x="14" y="26" width={(W / 2 - 14) * 0.65} height="16" rx="8" fill="#8b93c9" opacity="0.35" />
-        <rect x={W / 2 - (W / 2 - 14) * 0.35} y="26" width={(W / 2 - 14) * 0.7} height="16" rx="8" fill="#7fb8a4" opacity="0.45" />
-        <rect x={W - 14 - (W / 2 - 14) * 0.65} y="26" width={(W / 2 - 14) * 0.65} height="16" rx="8" fill="#e2a35c" opacity="0.35" />
+        <rect x="14" y="26" width={(W2 / 2 - 14) * 0.65} height="16" rx="8" fill="#8b93c9" opacity="0.35" />
+        <rect x={W2 / 2 - (W2 / 2 - 14) * 0.35} y="26" width={(W2 / 2 - 14) * 0.7} height="16" rx="8" fill="#7fb8a4" opacity="0.45" />
+        <rect x={W2 - 14 - (W2 / 2 - 14) * 0.65} y="26" width={(W2 / 2 - 14) * 0.65} height="16" rx="8" fill="#e2a35c" opacity="0.35" />
         <line x1={x(arousal)} y1="14" x2={x(arousal)} y2="54" stroke={meta.color} strokeWidth="2.5" style={{ filter: `drop-shadow(0 0 6px ${meta.color})` }} />
         <circle cx={x(arousal)} cy="26" r="5" fill={meta.color} />
         <text x="14" y="72" fontSize="9" fill="#8b93c9">Hypo</text>
-        <text x={W / 2} y="72" fontSize="9" fill="#7fb8a4" textAnchor="middle">Fenster</text>
-        <text x={W - 14} y="72" fontSize="9" fill="#e2a35c" textAnchor="end">Hyper</text>
+        <text x={W2 / 2} y="72" fontSize="9" fill="#7fb8a4" textAnchor="middle">Fenster</text>
+        <text x={W2 - 14} y="72" fontSize="9" fill="#e2a35c" textAnchor="end">Hyper</text>
       </svg>
       <p className="mt-2 text-sm font-semibold" style={{ color: meta.color }}>{meta.title}</p>
       <p className="mt-1 text-sm leading-relaxed text-white/65">{meta.body}</p>
@@ -240,36 +286,43 @@ export default function ToleranzView() {
   historyRef.current = [...historyRef.current, arousal].slice(-40);
 
   const setArousal = (v: number) => setState({ arousal: v });
+  const dragTo = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const vx = (e.clientX - rect.left) / rect.width;
+    setState({ arousal: Math.max(-1, Math.min(1, (vx - 0.5) * 2.4)) });
+  };
 
   return (
     <div>
-      <ChapterHero art={chapter.art} kicker={chapter.kicker} title={chapter.title} sub={chapter.sub} index={chapter.index} />
+      <p className="mb-1 max-w-3xl text-sm leading-relaxed text-white/55">
+        {chapter.sub} Ziehe quer über das Relief oder bewege den Regler — das Land verformt sich live,
+        die Lichtkugel rollt mit und wirft Schatten. Höhe ist Überflutung, Tiefe ist Erstarrung,
+        die weiche Mitte ist dein Fenster.
+      </p>
+      <p className="mb-4 max-w-3xl text-base leading-relaxed text-white/70">{windowOfTolerance.body}</p>
 
-      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8" aria-label="Das Toleranzfenster interaktiv erkunden">
-        <p className="mx-auto max-w-3xl text-center text-base leading-relaxed text-white/70">{windowOfTolerance.body}</p>
-
-        <div className="mt-10 grid gap-6 lg:grid-cols-[1fr_360px]">
+      <section className="w-full px-1 py-2" aria-label="Das Toleranzfenster interaktiv erkunden">
+        <div className="grid gap-4 lg:grid-cols-[1fr_350px]">
           <div
-            className="vignette relative h-[56vh] min-h-[400px] overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906]"
-            onPointerDown={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              const vx = (e.clientX - rect.left) / rect.width;
-              setState({ arousal: Math.max(-1, Math.min(1, (vx - 0.5) * 2.4)) });
-            }}
-            onPointerMove={(e) => {
-              if (e.buttons !== 1) return;
-              const rect = e.currentTarget.getBoundingClientRect();
-              const vx = (e.clientX - rect.left) / rect.width;
-              setState({ arousal: Math.max(-1, Math.min(1, (vx - 0.5) * 2.4)) });
-            }}
+            className="vignette relative h-[72vh] min-h-[540px] cursor-ew-resize overflow-hidden rounded-2xl border border-white/10 bg-[#0b0906] touch-none select-none"
+            onPointerDown={dragTo}
+            onPointerMove={(e) => { if (e.buttons === 1) dragTo(e); }}
           >
             <WebGLGate
               className="absolute inset-0"
-              camera={{ position: [0, 2.2, 7.5], fov: 45 }}
-              fallback={<BandFallback arousal={arousal} />}
+              camera={{ position: [0, 4.4, 9.8], fov: 46 }}
+              shadows
+              fallback={<ReliefFallback arousal={arousal} />}
             >
-              <BandStage arousal={arousal} />
+              <ReliefStage arousal={arousal} />
             </WebGLGate>
+
+            {/* Zonen-Überlagerung */}
+            <div className="pointer-events-none absolute inset-x-6 bottom-24 flex justify-between text-[11px] uppercase tracking-[0.22em]">
+              <span className="text-[#8b93c9]/80">Hypo · Tiefe</span>
+              <span className="text-[#7fb8a4]/80">Fenster</span>
+              <span className="text-[#e2a35c]/80">Hyper · Höhe</span>
+            </div>
 
             {/* Regler über der Bühne */}
             <div className="absolute inset-x-8 bottom-5">
@@ -311,10 +364,6 @@ export default function ToleranzView() {
               </div>
             </div>
           </div>
-        </div>
-
-        <div className="mt-8">
-          <Disclaimer />
         </div>
       </section>
     </div>
