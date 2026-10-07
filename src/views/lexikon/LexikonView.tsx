@@ -1,11 +1,10 @@
 import { useMemo, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronDown, Clock, Thermometer } from "lucide-react";
-import { ChapterHero } from "@/components/ChapterHero";
-import { Disclaimer } from "@/components/Disclaimer";
 import { exercises, type Exercise, type ExerciseEffect } from "@/data/v1/exercises";
 import { CHAPTERS } from "@/views/chapters";
-import { ExerciseVisual } from "./ExerciseVisual";
+import { markPracticed } from "@/ocean/world";
+import { ExerciseMedia } from "./ExerciseMedia";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
 const chapter = CHAPTERS[4];
@@ -66,7 +65,7 @@ function ExerciseDetail({ ex, reduced }: { ex: Exercise; reduced: boolean }) {
       className="overflow-hidden"
     >
       <div className="space-y-4 border-t border-white/[0.07] px-5 pb-6 pt-4">
-        <ExerciseVisual id={ex.id} effect={ex.effect} large />
+        <ExerciseMedia id={ex.id} effect={ex.effect} large />
         {/* Dauer als Zeitbalken */}
         <div>
           <p className="mb-1.5 flex items-center gap-2 text-[10px] uppercase tracking-[0.25em] text-white/40">
@@ -138,9 +137,12 @@ export default function LexikonView() {
 
   return (
     <div>
-      <ChapterHero art={chapter.art} kicker={chapter.kicker} title={chapter.title} sub={chapter.sub} index={chapter.index} />
+      <p className="mb-3 max-w-3xl text-sm leading-relaxed text-white/55">
+        {chapter.sub} Jedes Medium ist ein kurzer, ruhiger, dunkel-warmer Licht-Loop —
+        Atemrhythmus statt Stock-Optik. Darunter der Schritt-für-Schritt-Ablauf.
+      </p>
 
-      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8" aria-label="Übungs-Lexikon">
+      <section className="w-full px-1 py-2" aria-label="Übungs-Lexikon">
         {/* Filter */}
         <div className="mb-3 flex flex-wrap items-center gap-3">
           <ThermometerFilter value={effect} onChange={setEffect} />
@@ -181,7 +183,7 @@ export default function LexikonView() {
                   style={{ boxShadow: open ? `0 10px 40px rgba(0,0,0,0.4), 0 0 30px ${meta.color}14` : undefined }}
                 >
                   <button
-                    onClick={() => setOpenId(open ? null : ex.id)}
+                    onClick={() => { setOpenId(open ? null : ex.id); if (!open) markPracticed(ex.id); }}
                     aria-expanded={open}
                     className="w-full p-5 text-left"
                   >
@@ -197,7 +199,7 @@ export default function LexikonView() {
                       </span>
                     </div>
                     <h2 className="font-display mt-3 text-xl leading-snug text-[#f3e7d3]">{ex.title}</h2>
-                    <ExerciseVisual id={ex.id} effect={ex.effect} />
+                    <ExerciseMedia id={ex.id} effect={ex.effect} />
                     <p className="mt-1.5 text-xs text-white/45">{ex.context} · {meta.desc}</p>
                     <div className="mt-3 flex items-center justify-between">
                       <p className="line-clamp-2 text-sm text-white/60">{ex.goal}</p>
@@ -213,9 +215,6 @@ export default function LexikonView() {
           </AnimatePresence>
         </motion.div>
 
-        <div className="mt-10">
-          <Disclaimer />
-        </div>
       </section>
     </div>
   );
