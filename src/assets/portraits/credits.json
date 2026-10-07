@@ -5,11 +5,12 @@
   "reich":  { "type": "photo", "file": "Wilhelm Reich.jpg", "source": "https://commons.wikimedia.org/wiki/File:Wilhelm_Reich.jpg", "license": "Public domain" },
   "rogers": { "type": "photo", "file": "Carl Rogers, 1947 president of the APA.jpg", "source": "https://commons.wikimedia.org/wiki/File:Carl_Rogers,_1947_president_of_the_APA.jpg", "license": "CC0" },
   "vanderkolk": { "type": "photo", "file": "Bessel van der Kolk 2022.jpg", "source": "https://commons.wikimedia.org/wiki/File:Bessel_van_der_Kolk_2022.jpg", "license": "CC BY 3.0" },
-  "adler":  { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "bowlby": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "levine": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "shapiro":{ "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "porges": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "herman": { "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" },
-  "linehan":{ "type": "ai", "note": "Kein freies Foto auf Wikimedia Commons verfügbar — künstlerische Darstellung" }
+  "bowlby": { "type": "photo", "file": "John Bowlby.jpg (en.wikipedia)", "source": "https://en.wikipedia.org/wiki/John_Bowlby", "license": "siehe en.wikipedia" },
+  "porges": { "type": "photo", "file": "Steve Porges.jpg (en.wikipedia)", "source": "https://en.wikipedia.org/wiki/Stephen_Porges", "license": "siehe en.wikipedia" },
+  "perls":  { "type": "photo", "file": "Fritz Perls.jpg", "source": "https://commons.wikimedia.org/wiki/File:Fritz_Perls.jpg", "license": "siehe Commons" },
+  "adler":  { "type": "drawing", "file": "Alfred Adler.jpg (Porträtzeichnung)", "source": "https://commons.wikimedia.org/wiki/File:Alfred_Adler.jpg", "license": "Public domain" },
+  "levine": { "type": "ai", "note": "Kein brauchbares freies Foto verfügbar — künstlerische Darstellung" },
+  "shapiro":{ "type": "ai", "note": "Kein brauchbares freies Foto verfügbar (niedrig auflösender Videostand) — künstlerische Darstellung" },
+  "herman": { "type": "ai", "note": "Kein freies Foto verfügbar — künstlerische Darstellung" },
+  "linehan":{ "type": "ai", "note": "Kein freies Foto verfügbar — künstlerische Darstellung" }
 }
