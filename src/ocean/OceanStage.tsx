@@ -11,6 +11,11 @@ import {
 } from "./world";
 import { waterSplat, setWaterCalm, isFluidActive } from "./WaterCanvas";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { useIsMobile } from "@/hooks/use-is-mobile";
+import { webgl2Available } from "@/hooks/use-webgl";
+import { OceanCanvas } from "../ocean3d/OceanCanvas";
+import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
+import { splat3D, projStore } from "../ocean3d/projStore";
 
 // ── Welt-Schicht-Transform ───────────────────────────────────────────────────
 
@@ -345,6 +350,8 @@ function PhenomenonInput() {
     // Leuchten im Wasser
     waterSplat(0.5, 0.5, 0, 0, [0.9, 0.68, 0.38], 0.012, 0.5);
     requestAnimationFrame(() => waterSplat(0.5, 0.5, 120, -60, [0.55, 0.45, 0.3], 0.006, 0.3));
+    // 3D: Ringwelle am Einschlagspunkt der Boje
+    splat3D(ph.x, ph.y, 1.4);
     void ph;
   };
 
@@ -452,6 +459,8 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
 export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   const ocean = useOcean();
   const reduced = useReducedMotion();
+  const isMobile = useIsMobile();
+  const use3D = useMemo(() => !reduced && webgl2Available(), [reduced]);
   const stageRef = useRef<HTMLDivElement>(null);
   const pointer = useRef({
     down: false, moved: false, sx: 0, sy: 0, lx: 0, ly: 0, px: 0, py: 0, pt: 0,
@@ -480,30 +489,45 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       }
 
       // Segel-Kielwasser: sanfte Spur hinter der Kamera
-      if (ocean.sailing && isFluidActive()) {
-        waterSplat(0.5, 0.55, (Math.random() - 0.5) * 200, 140, [0.35, 0.32, 0.24], 0.004, 0.12);
+      if (ocean.sailing) {
+        if (isFluidActive()) {
+          waterSplat(0.5, 0.55, (Math.random() - 0.5) * 200, 140, [0.35, 0.32, 0.24], 0.004, 0.12);
+        }
+        if (use3D && Math.random() < 0.22) {
+          splat3D(ocean.cam.x + (Math.random() - 0.5) * 120, ocean.cam.y + (Math.random() - 0.5) * 120, 0.5);
+        }
       }
 
       // Leben im Wasser: langsame Ambient-Wirbel
       ambient.current.t += dt;
-      if (!reduced && ambient.current.t > ambient.current.next && isFluidActive()) {
-        ambient.current.next = ambient.current.t + 2.2 + Math.random() * 2.5;
-        const ang = Math.random() * Math.PI * 2;
-        waterSplat(
-          0.15 + Math.random() * 0.7,
-          0.15 + Math.random() * 0.7,
-          Math.cos(ang) * 260,
-          Math.sin(ang) * 260,
-          Math.random() > 0.75 ? [0.5, 0.4, 0.24] : [0.13, 0.26, 0.28],
-          0.0028,
-          0.055,
-        );
+      if (!reduced && ambient.current.t > ambient.current.next) {
+        if (isFluidActive()) {
+          ambient.current.next = ambient.current.t + 2.2 + Math.random() * 2.5;
+          const ang = Math.random() * Math.PI * 2;
+          waterSplat(
+            0.15 + Math.random() * 0.7,
+            0.15 + Math.random() * 0.7,
+            Math.cos(ang) * 260,
+            Math.sin(ang) * 260,
+            Math.random() > 0.75 ? [0.5, 0.4, 0.24] : [0.13, 0.26, 0.28],
+            0.0028,
+            0.055,
+          );
+        } else if (use3D) {
+          ambient.current.next = ambient.current.t + 4.5 + Math.random() * 5;
+          splat3D(
+            ocean.cam.x + (Math.random() - 0.5) * 1400,
+            ocean.cam.y + (Math.random() - 0.5) * 900,
+            0.25 + Math.random() * 0.3,
+          );
+        }
       }
 
       // Stille Mechanik: Innehalten beruhigt das Wasser; ruhige Hand öffnet die Lexikon-Tür
       const p = pointer.current;
       const idle = now - p.stillSince > 2600;
       setWaterCalm(idle && !ocean.view);
+      projStore.calm = idle && !ocean.view ? 1 : 0;
       if (idle && !ocean.view) {
         // einmalig pro Phase zählen (wird im Store gegen Wiederholung gedämpft)
         if (ocean.phenomena.length > 0 && Math.random() < 0.002) calmPulse();
@@ -517,7 +541,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [ocean.sailing, ocean.view, ocean.phenomena.length, reduced]);
+  }, [ocean.sailing, ocean.view, ocean.phenomena.length, reduced, use3D]);
 
   // Zeiger → Strömung + Pan + Zoom
   const handlers = useMemo(() => {
@@ -571,7 +595,12 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         // Wasser aufbrechen
         const vw = stageRef.current?.getBoundingClientRect();
         if (vw && !ocean.view) {
-          waterSplat(u, v, dx * 2.4, -dy * 2.4, [0.42, 0.35, 0.25], Math.min(0.006, 0.0025 + inst * 0.010), Math.min(0.18, 0.05 + inst * 0.25));
+          if (isFluidActive()) {
+            waterSplat(u, v, dx * 2.4, -dy * 2.4, [0.42, 0.35, 0.25], Math.min(0.006, 0.0025 + inst * 0.010), Math.min(0.18, 0.05 + inst * 0.25));
+          }
+          if (use3D && inst > 0.05 && Math.random() < 0.3) {
+            splat3D(wx, wy, Math.min(0.9, 0.2 + inst * 0.6));
+          }
         }
         p.lx = e.clientX; p.ly = e.clientY;
       },
@@ -625,43 +654,56 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       role="application"
       aria-label="Das Meer der Phänomene — Inseln ansegeln, Phänomene eingeben, Wasser berühren"
     >
-      {/* Wasser */}
-      <div className="absolute inset-0">
-        <WaterSurface />
-      </div>
+      {/* Wasser + Welt: 3D-Szene oder Legacy-2D (reduced-motion / kein WebGL2) */}
+      {use3D ? (
+        <>
+          <div className="absolute inset-0">
+            <OceanCanvas mobile={isMobile} />
+          </div>
+          <IslandLabels3D onSail={sail} />
+        </>
+      ) : (
+        <>
+          {/* Wasser */}
+          <div className="absolute inset-0">
+            <WaterSurface />
+          </div>
 
-      {/* Welt-Schicht */}
-      <div
-        className="absolute left-0 top-0 origin-top-left"
-        style={{
-          width: WORLD.w,
-          height: WORLD.h,
-          transform: worldTransform(ocean.cam, vw, vh),
-        }}
-      >
-        {/* sanfte Boden-Lichtungen unter den Inseln */}
-        {ISLANDS.map((isl) => (
+          {/* Welt-Schicht */}
           <div
-            key={isl.id}
-            aria-hidden="true"
-            className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full"
+            className="absolute left-0 top-0 origin-top-left"
             style={{
-              left: isl.x,
-              top: isl.y,
-              width: isl.r * 5,
-              height: isl.r * 5,
-              background: `radial-gradient(circle, ${isl.ground[2]}14 0%, transparent 62%)`,
+              width: WORLD.w,
+              height: WORLD.h,
+              transform: worldTransform(ocean.cam, vw, vh),
             }}
-          />
-        ))}
-        <PhenomenaLayer />
-        <FogLayer />
-        {ISLANDS.map((isl) => (
-          <Island key={isl.id} id={isl.id} onSail={sail} />
-        ))}
-      </div>
+          >
+            {/* sanfte Boden-Lichtungen unter den Inseln */}
+            {ISLANDS.map((isl) => (
+              <div
+                key={isl.id}
+                aria-hidden="true"
+                className="absolute -translate-x-1/2 -translate-y-1/2 rounded-full"
+                style={{
+                  left: isl.x,
+                  top: isl.y,
+                  width: isl.r * 5,
+                  height: isl.r * 5,
+                  background: `radial-gradient(circle, ${isl.ground[2]}14 0%, transparent 62%)`,
+                }}
+              />
+            ))}
+            <PhenomenaLayer />
+            <FogLayer />
+            {ISLANDS.map((isl) => (
+              <Island key={isl.id} id={isl.id} onSail={sail} />
+            ))}
+          </div>
 
-      <PhenomenonCard />
+          <PhenomenonCard />
+        </>
+      )}
+
       <PhenomenonInput />
       <Hud onSail={sail} />
     </div>
