@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Activity, CalendarDays, Download, Dumbbell, GripVertical, Moon, Plus, Trash2, Users, Wind } from "lucide-react";
-import { ChapterHero } from "@/components/ChapterHero";
-import { Disclaimer } from "@/components/Disclaimer";
-import { buildingBlocks, blockCategoryLabels, type BlockCategory } from "@/data/blocks";
+import { Download, GripVertical, Plus, Trash2 } from "lucide-react";
+import { buildingBlocks, blockCategoryLabels } from "@/data/blocks";
 import { exercises } from "@/data/v1/exercises";
 import { methods } from "@/data/v1/methods";
 import { phaseInfos } from "@/data/nervous";
 import { methodSymptomsLocal } from "@/data/navigatorLinks";
 import { CHAPTERS } from "@/views/chapters";
-import { ITEM_IMAGES } from "./itemAssets";
+import { BlockSymbol, type SymbolKey } from "./BlockSymbol";
 import { toggleProgramItem, useAtlasState } from "@/state/atlas-store";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 
@@ -26,36 +24,26 @@ interface Item {
   color: string;
   minutes?: string;
   group: string;
-  icon: "moon" | "dumbbell" | "users" | "wind" | "calendar" | "activity";
+  sym: SymbolKey;
 }
 
 const KIND_COLOR: Record<ItemKind, string> = { block: "#a3b18a", exercise: "#7fb8a4", method: "#d9a05b" };
-const KIND_ICON: Record<Item["icon"], React.ReactNode> = {
-  moon: <Moon className="h-3.5 w-3.5" aria-hidden />,
-  dumbbell: <Dumbbell className="h-3.5 w-3.5" aria-hidden />,
-  users: <Users className="h-3.5 w-3.5" aria-hidden />,
-  wind: <Wind className="h-3.5 w-3.5" aria-hidden />,
-  calendar: <CalendarDays className="h-3.5 w-3.5" aria-hidden />,
-  activity: <Activity className="h-3.5 w-3.5" aria-hidden />,
-};
-const BLOCK_ICON: Record<BlockCategory, Item["icon"]> = {
-  schlaf: "moon", bewegung: "dumbbell", sozial: "users", achtsamkeit: "wind", alltag: "calendar",
-};
 
 const PALETTE: Item[] = [
   ...buildingBlocks.map((b) => ({
     id: b.id, kind: "block" as const, title: b.title,
-    sub: blockCategoryLabels[b.category], color: KIND_COLOR.block,
-    minutes: b.minutes, group: blockCategoryLabels[b.category], icon: BLOCK_ICON[b.category],
+    sub: b.effect, color: KIND_COLOR.block,
+    minutes: b.minutes, group: blockCategoryLabels[b.category],
+    sym: b.id as SymbolKey,
   })),
   ...exercises.map((e) => ({
     id: e.id, kind: "exercise" as const, title: e.title,
     sub: e.effectLabel, color: KIND_COLOR.exercise, minutes: e.minutes,
-    group: "Übungen", icon: "activity" as const,
+    group: "Übungen", sym: `fx-${e.effect}` as SymbolKey,
   })),
   ...methods.map((m) => ({
     id: m.id, kind: "method" as const, title: m.name,
-    sub: m.focusShort, color: KIND_COLOR.method, group: "Verfahren", icon: "activity" as const,
+    sub: m.focusShort, color: KIND_COLOR.method, group: "Verfahren", sym: "method" as SymbolKey,
   })),
 ];
 
@@ -149,7 +137,7 @@ export default function BaukastenView() {
   const exportProgram = () => {
     const byPhase = (ph: PhaseId) => programItems.filter((p) => phaseFor(p.id) === ph);
     const text = [
-      "TRAUMAATLAS 2 — Mein Programm",
+      "TRAUMAATLAS 3 — Mein Programm",
       `Exportiert: ${new Date().toLocaleString("de-DE")}`,
       "",
       ...phaseInfos.map((ph) =>
@@ -179,23 +167,20 @@ export default function BaukastenView() {
 
   return (
     <div>
-      <ChapterHero art={chapter.art} kicker={chapter.kicker} title={chapter.title} sub={chapter.sub} index={chapter.index} />
+      <p className="mb-8 max-w-3xl text-sm leading-relaxed text-white/55">
+        {chapter.sub} Elemente in die drei Phasen ziehen — leuchtende Linien zeigen live,
+        welche Elemente sich über gemeinsame Symptome gegenseitig verstärken.
+      </p>
 
-      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8" aria-label="Programm-Baukasten">
-        <p className="mx-auto max-w-3xl text-center text-base leading-relaxed text-white/65">
-          Bauen Sie Ihr persönliches Regulationssystem: Elemente in die drei Phasen ziehen.
-          Leuchtende Linien zeigen live, welche Elemente sich über gemeinsame Symptome gegenseitig verstärken.
-        </p>
-
+      <section aria-label="Programm-Baukasten">
         {/* Bibliothek (gruppiert) */}
-        <div className="mt-10 grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
           {grouped.map(({ group, items }) => (
             <div key={group} className="glass-soft rounded-2xl p-4">
               <p className="mb-2.5 text-[10px] uppercase tracking-[0.25em] text-white/40">{group}</p>
-              <div className="grid max-h-64 grid-cols-2 content-start gap-2 overflow-y-auto scrollbar-thin sm:grid-cols-3">
+              <div className="grid max-h-72 grid-cols-2 content-start gap-2 overflow-y-auto scrollbar-thin sm:grid-cols-3">
                 {items.map((p) => {
                   const inProgram = program.includes(p.id);
-                  const img = ITEM_IMAGES[p.id];
                   return (
                     <motion.div
                       key={p.id}
@@ -205,43 +190,29 @@ export default function BaukastenView() {
                       onDragStart={() => setDragging(p.id)}
                       onDragEnd={() => { setDragging(null); setOverPhase(null); }}
                       whileDrag={reduced ? undefined : { scale: 1.06, zIndex: 30, boxShadow: `0 16px 44px rgba(0,0,0,0.6), 0 0 26px ${p.color}77` }}
-                      className={`group relative w-[150px] cursor-grab select-none overflow-hidden rounded-xl border active:cursor-grabbing ${
+                      className={`group relative cursor-grab select-none overflow-hidden rounded-xl border active:cursor-grabbing ${
                         inProgram ? "border-white/[0.04] opacity-30" : "border-white/12"
                       }`}
                       style={{ borderColor: inProgram ? undefined : `${p.color}55` }}
                     >
-                      {img ? (
-                        <div className="relative h-[86px]">
-                          <img src={img} alt="" className="h-full w-full object-cover" draggable={false} />
-                          <div className="absolute inset-0 bg-gradient-to-t from-[#0e0b08] via-transparent to-transparent" />
-                          {!inProgram && (
-                            <button
-                              onClick={() => toggleProgramItem(p.id)}
-                              aria-label={`${p.title} hinzufügen`}
-                              className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white/80 backdrop-blur-sm transition-colors hover:text-[#7fb8a4]"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          <GripVertical className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-white/50" aria-hidden />
-                        </div>
-                      ) : (
-                        <div className="relative flex h-[86px] items-center justify-center" style={{ background: `${p.color}14` }}>
-                          <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
-                          {!inProgram && (
-                            <button
-                              onClick={() => toggleProgramItem(p.id)}
-                              aria-label={`${p.title} hinzufügen`}
-                              className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white/80 backdrop-blur-sm transition-colors hover:text-[#7fb8a4]"
-                            >
-                              <Plus className="h-3.5 w-3.5" />
-                            </button>
-                          )}
-                          <GripVertical className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-white/40" aria-hidden />
-                        </div>
-                      )}
-                      <div className="px-2 pb-1.5 pt-1">
-                        <p className="truncate text-[11px] leading-tight text-white/85">{p.title}</p>
+                      <div
+                        className="relative flex h-[72px] items-center justify-center"
+                        style={{ background: `radial-gradient(circle at 50% 62%, ${p.color}1f, ${p.color}08 70%)`, color: p.color }}
+                      >
+                        <BlockSymbol sym={p.sym} className="h-9 w-9" strokeWidth={1.55} />
+                        {!inProgram && (
+                          <button
+                            onClick={() => toggleProgramItem(p.id)}
+                            aria-label={`${p.title} hinzufügen`}
+                            className="absolute right-1.5 top-1.5 rounded-full bg-black/55 p-1 text-white/80 backdrop-blur-sm transition-colors hover:text-[#7fb8a4]"
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                          </button>
+                        )}
+                        <GripVertical className="absolute left-1.5 top-1.5 h-3.5 w-3.5 text-white/40" aria-hidden />
+                      </div>
+                      <div className="px-2 pb-1.5 pt-1.5">
+                        <p className="truncate text-[11px] font-medium leading-tight text-white/90">{p.title}</p>
                         <p className="truncate text-[9px] text-white/40">{p.minutes ?? p.sub}</p>
                       </div>
                     </motion.div>
@@ -318,11 +289,12 @@ export default function BaukastenView() {
                         className="glass-slide flex items-center gap-2.5 rounded-xl px-3 py-2.5"
                         style={{ boxShadow: `0 6px 24px rgba(0,0,0,0.35), inset 3px 0 0 ${p.color}` }}
                       >
-                        {ITEM_IMAGES[p.id] ? (
-                          <img src={ITEM_IMAGES[p.id]} alt="" className="h-10 w-14 shrink-0 rounded-lg object-cover" draggable={false} />
-                        ) : (
-                          <span style={{ color: p.color }}>{KIND_ICON[p.icon]}</span>
-                        )}
+                        <span
+                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+                          style={{ color: p.color, background: `${p.color}14`, boxShadow: `inset 0 0 0 1px ${p.color}30` }}
+                        >
+                          <BlockSymbol sym={p.sym} className="h-5 w-5" strokeWidth={1.6} />
+                        </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-sm text-[#f3e7d3]">{p.title}</span>
                           <span className="block truncate text-[10px] text-white/40">{p.sub}{p.minutes ? ` · ${p.minutes}` : ""}</span>
@@ -362,10 +334,6 @@ export default function BaukastenView() {
               <Download className="h-4 w-4" aria-hidden /> Programm exportieren
             </button>
           </div>
-        </div>
-
-        <div className="mt-8">
-          <Disclaimer />
         </div>
       </section>
     </div>
