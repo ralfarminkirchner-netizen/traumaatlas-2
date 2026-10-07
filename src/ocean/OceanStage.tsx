@@ -571,7 +571,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         // Wasser aufbrechen
         const vw = stageRef.current?.getBoundingClientRect();
         if (vw && !ocean.view) {
-          waterSplat(u, v, dx * 2.4, -dy * 2.4, [0.42, 0.35, 0.25], Math.min(0.008, 0.003 + inst * 0.014), Math.min(0.28, 0.06 + inst * 0.35));
+          waterSplat(u, v, dx * 2.4, -dy * 2.4, [0.42, 0.35, 0.25], Math.min(0.006, 0.0025 + inst * 0.010), Math.min(0.18, 0.05 + inst * 0.25));
         }
         p.lx = e.clientX; p.ly = e.clientY;
       },

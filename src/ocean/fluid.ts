@@ -199,7 +199,8 @@ void main () {
   fragColor = vec4(velocity, 0.0, 1.0);
 }`;
 
-// Wasser-Optik: Tiefen-Grundton + biolumineszente Farbspur + Glanz auf schneller Strömung
+// Wasser-Oberfläche: echtes Höhenfeld + Beleuchtung (siehe waterSurface-Renderer unten).
+const ISLAND_COUNT = 10;
 const DISPLAY_FRAG = `#version 300 es
 precision highp float;
 in vec2 vUv;
@@ -208,6 +209,12 @@ uniform sampler2D uTexture;
 uniform sampler2D uVelocity;
 uniform float time;
 uniform vec2 texelSize;
+uniform vec2 uViewport;
+uniform vec2 uCam;
+uniform float uZoom;
+uniform float uSwell;
+uniform vec4 uIslands[${ISLAND_COUNT}];
+uniform vec3 uIslandCol[${ISLAND_COUNT}];
 
 float hash (vec2 p) {
   return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
@@ -219,37 +226,139 @@ float noise (vec2 p) {
   return mix(mix(hash(i + vec2(0.0, 0.0)), hash(i + vec2(1.0, 0.0)), u.x),
              mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
 }
+float fbm2 (vec2 p) { return noise(p) * 0.65 + noise(p * 2.13 + 7.7) * 0.35; }
+
+// Höhenfeld der offenen See (Weltkoordinaten → schwenk-fest)
+float swellH (vec2 w, float t) {
+  float h = 0.0;
+  h += sin(dot(w, vec2(0.0110, 0.0068)) + t * 0.50) * 0.55;
+  h += sin(dot(w, vec2(-0.0068, 0.0132)) + t * 0.40 + 1.7) * 0.38;
+  h += sin(dot(w, vec2(0.0205, -0.0169)) + t * 0.75 + 4.1) * 0.22;
+  h += fbm2(w * 0.045 + vec2(t * 0.10, -t * 0.06)) * 0.42;
+  h += fbm2(w * 0.115 + vec2(-t * 0.14, t * 0.09)) * 0.22;
+  return h;
+}
+
+// Prozeduraler Nachthimmel als Reflexionsquelle
+vec3 skyColor (vec3 d) {
+  float horiz = pow(1.0 - clamp(d.z, 0.0, 1.0), 3.0);
+  vec3 zenith = vec3(0.014, 0.022, 0.050);
+  vec3 horizonN = vec3(0.42, 0.26, 0.12);
+  vec3 horizonS = vec3(0.060, 0.082, 0.115);
+  vec3 horizon = mix(horizonS, horizonN, smoothstep(-0.2, 0.6, d.y));
+  return mix(zenith, horizon, horiz);
+}
 
 void main () {
-  vec3 dye = texture(uTexture, vUv).rgb;
-  vec2 vel = texture(uVelocity, vUv).rg;
+  vec2 uv = vUv;
+  vec2 vp = max(uViewport, vec2(1.0));
+  vec2 px = uv * vp;                                  // Buffer-px, y-up
+  vec2 world = uCam + (uv - 0.5) * vp / uZoom;        // Weltkoordinaten
+  float t = time;
 
-  // Tiefenverlauf: dunkler Horizont unten, leicht aufhellend nach oben
-  vec3 deep = vec3(0.006, 0.022, 0.030);
-  vec3 shallow = vec3(0.016, 0.055, 0.070);
-  vec3 col = mix(deep, shallow, vUv.y * 0.85 + 0.1);
-
-  // Große, langsame Marmorierung, damit das Wasser nie starr wirkt
-  float marb = noise(vUv * 5.0 + time * 0.03) * 0.5 + noise(vUv * 11.0 - time * 0.02) * 0.5;
-  col += vec3(0.004, 0.010, 0.012) * marb;
-
-  // Biolumineszenz der Farbspur (warmes Gold / kühl glühend) — dezent
-  col += dye * vec3(0.85, 0.68, 0.48) * 0.42;
-
-  // Glanzkante auf schneller Strömung — die „aufgebrochene" Wasserfläche
+  vec3 dye = texture(uTexture, uv).rgb;
+  vec2 vel = texture(uVelocity, uv).xy;
   float sp = length(vel);
-  col += vec3(0.85, 0.72, 0.5) * smoothstep(0.35, 2.2, sp) * 0.16;
 
-  // Kaustik-Flimmern in bewegten Zonen
-  float ca = noise(vUv * 60.0 + vel * 2.0 + time * 0.35);
-  col += vec3(0.10, 0.16, 0.16) * ca * smoothstep(0.05, 0.6, sp) * 0.25;
+  // ── Höhenfeld + Normale ──────────────────────────────
+  float flowLift = min(sp, 2.0) * 0.12;
+  float hC = swellH(world, t) * uSwell + flowLift;
+  float e = 3.0 / uZoom;
+  float hX = (swellH(world + vec2(e, 0.0), t) - swellH(world - vec2(e, 0.0), t)) * uSwell;
+  float hY = (swellH(world + vec2(0.0, e), t) - swellH(world - vec2(0.0, e), t)) * uSwell;
 
-  // Vignette
-  vec2 d = vUv - 0.5;
-  col *= 1.0 - dot(d, d) * 0.55;
+  vec3 N = normalize(vec3(-hX * 1.5, -hY * 1.5, 1.0));
+  vec3 V = normalize(vec3(0.0, -0.35, 1.0));          // Blick leicht von Süden
+
+  // ── Wasserkörper: Tiefe, Kämme, Subsurface ───────────
+  vec3 deep = vec3(0.006, 0.018, 0.028);
+  vec3 teal = vec3(0.016, 0.088, 0.100);
+  float crest = smoothstep(0.15, 1.1, hC);
+  vec3 body = mix(deep, teal, 0.28 + crest * 0.45);
+  float sss = crest * pow(max(dot(N, normalize(vec3(0.3, -0.8, 0.4))), 0.0), 2.0);
+  body += vec3(0.020, 0.095, 0.095) * sss;
+
+  // ── Fresnel-Himmelsreflexion ─────────────────────────
+  float F = 0.02 + 0.98 * pow(1.0 - max(dot(N, V), 0.0), 5.0);
+  vec3 col = mix(body, skyColor(reflect(-V, N)), F);
+
+  // ── Mond: enger Glanz + breiter, weicher Glitzerpfad ──
+  vec3 L = normalize(vec3(-0.28, 0.80, 0.52));
+  vec3 H = normalize(L + V);
+  vec3 moonCol = vec3(1.0, 0.83, 0.55);
+  // diffuse Flächenhelligkeit, damit der Swell liest
+  col += moonCol * max(dot(N, L), 0.0) * 0.045;
+  // Glanz erlischt dort, wo die Strömung die Oberfläche zerschlägt
+  float specFade = 1.0 - min(sp * 0.45, 0.85);
+  col += moonCol * pow(max(dot(N, H), 0.0), 260.0) * 1.5 * specFade;
+  col += moonCol * pow(max(dot(N, H), 0.0), 22.0) * 0.10 * specFade;
+  // Glitzerpfad: fängt die Chop-Normalen direkt, breite weiche Maske
+  float pathSpec = pow(max(dot(N, H), 0.0), 48.0);
+  float pathMask = exp(-pow((uv.x - 0.42) * 4.2, 2.0)) * smoothstep(0.0, 0.45, uv.y);
+  col += moonCol * pathSpec * pathMask * (0.22 + 0.28 * specFade);
+  // Mikro-Funken: wandernde Sternpunkte auf der Oberfläche
+  float sparkle = pow(noise(world * 1.35 + vec2(t * 0.30, -t * 0.22)), 18.0);
+  col += moonCol * sparkle * 0.55 * (0.35 + 0.65 * specFade);
+  // Gelegentliche Schaumspitzen auf den höchsten Dünungen
+  float lace = smoothstep(1.02, 1.45, hC) * smoothstep(0.58, 0.85, fbm2(world * 0.25 + t * 0.2));
+  col += vec3(0.60, 0.68, 0.66) * lace * 0.20;
+
+  // ── Inseln: Untiefe, Saum-Schaum, Kaustik, Lichtreflex ──
+  for (int i = 0; i < ${ISLAND_COUNT}; i++) {
+    vec4 isl = uIslands[i];
+    if (isl.z < 1.0) continue;
+    vec2 dp = px - isl.xy;
+    float d = length(dp);
+    float fi = float(i);
+    // Untiefe: Wasser hellt zur Insel hin auf
+    float shallow = smoothstep(isl.z * 2.1, isl.z * 1.05, d);
+    vec3 shallowCol = mix(body, vec3(0.045, 0.155, 0.145) + uIslandCol[i] * 0.14, 0.62);
+    col = mix(col, shallowCol, shallow * 0.32);
+    // Schaumgürtel, von Wellenphase und Strömung getrieben
+    float band = smoothstep(isl.z * 1.16, isl.z * 1.02, d) * smoothstep(isl.z * 0.90, isl.z * 1.0, d);
+    float foamN = fbm2(world * 0.30 + vec2(t * 0.35, -t * 0.22) + fi * 13.1);
+    float foam = band * smoothstep(0.50, 0.78, foamN + hC * 0.10);
+    col += vec3(0.72, 0.80, 0.78) * foam * 0.26;
+    // Kaustik-Flimmern in der Untiefe
+    float ca = fbm2(world * 0.20 + vec2(-t * 0.28, t * 0.19) + fi * 7.3);
+    col += uIslandCol[i] * pow(ca, 2.4) * shallow * 0.10 * isl.w;
+    // Lichtreflex-Streifen unter der Insel (schimmernd, wellenmoduliert)
+    float below = max(0.0, -dp.y);
+    float streak = exp(-abs(dp.x) / (isl.z * 0.75)) * exp(-below / (isl.z * 3.4));
+    streak *= 0.40 + 0.60 * noise(vec2(world.x * 0.06 + fi * 3.0, t * 0.7));
+    streak *= 0.65 + 0.35 * fbm2(world * 0.11 + vec2(0.0, t * 0.5) + fi * 5.7);
+    col += uIslandCol[i] * streak * isl.w * 0.30;
+  }
+
+  // ── Strömung: Whitecaps + Biolumineszenz der Dye-Spur ──
+  vec3 dyeT = dye / (1.0 + dye * 0.9);               // weiche Tonemapping-Kurve gegen Schlamm
+  float caps = smoothstep(1.6, 3.6, sp) * (0.4 + 0.6 * noise(px * 0.35 + t * 0.8));
+  col += vec3(0.62, 0.68, 0.66) * caps * 0.14;
+  col += dyeT * vec3(0.95, 0.72, 0.42) * 0.34;
+  float dyeSum = dyeT.r + dyeT.g + dyeT.b;
+  col += vec3(0.80, 0.84, 0.80) * smoothstep(0.9, 2.4, dyeSum) * 0.08;
+
+  // ── Vignette ─────────────────────────────────────────
+  col *= 1.12;                                   // leichte Gesamt-Exposure
+  vec2 vd = uv - 0.5;
+  col *= 1.0 - dot(vd, vd) * 0.38;
 
   fragColor = vec4(col, 1.0);
 }`;
+
+/** Blickzustand der Welt — wird von WaterCanvas pro Frame aktualisiert. */
+export interface WaterView {
+  camX: number;
+  camY: number;
+  zoom: number;
+  /** Buffer-Größe in px */
+  vw: number;
+  vh: number;
+  /** ISLAND_COUNT × vec4: x, y (Buffer px, y-up), Radius px, Glow 0..1.5 */
+  islands: Float32Array;
+  /** ISLAND_COUNT × vec3: Reflexionsfarbe */
+  islandCols: Float32Array;
+}
 
 interface FBO {
   texture: WebGLTexture;
@@ -333,6 +442,9 @@ export class FluidSim {
 
   /** Wenn true, wird die Dämpfung erhöht — das Wasser beruhigt sich (stille Mechanik). */
   calm = false;
+
+  /** Welt-Blick für den Oberflächen-Renderer (Kamera + Inseln). */
+  view: WaterView | null = null;
 
   constructor(canvas: HTMLCanvasElement, opts: FluidOptions = {}) {
     const gl = canvas.getContext("webgl2", {
@@ -598,6 +710,16 @@ export class FluidSim {
     gl.uniform1i(p.u("uTexture"), this.dye.read.attach(0));
     gl.uniform1i(p.u("uVelocity"), this.velocity.read.attach(1));
     gl.uniform1f(p.u("time"), this.time);
+    // Oberflächen-Blick (Welt-Kamera + Inseln); ohne View: neutrale Mitte
+    const v = this.view;
+    gl.uniform2f(p.u("uViewport"), this.canvas.width, this.canvas.height);
+    gl.uniform2f(p.u("uCam"), v?.camX ?? 2600, v?.camY ?? 1600);
+    gl.uniform1f(p.u("uZoom"), v?.zoom ?? 0.62);
+    gl.uniform1f(p.u("uSwell"), this.calm ? 0.42 : 1.0);
+    const empty = new Float32Array(ISLAND_COUNT * 4);
+    const emptyC = new Float32Array(ISLAND_COUNT * 3);
+    gl.uniform4fv(p.u("uIslands[0]"), v ? v.islands : empty);
+    gl.uniform3fv(p.u("uIslandCol[0]"), v ? v.islandCols : emptyC);
     this.blit(null);
   }
 
