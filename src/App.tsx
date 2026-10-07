@@ -71,7 +71,7 @@ function ChapterStage({ id }: { id: IslandId }) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.45 }}
-      className="fixed inset-0 z-40 flex flex-col bg-[#0b0806]/[0.97] backdrop-blur-xl"
+      className="fixed inset-x-0 bottom-0 top-9 z-40 flex flex-col bg-[#0b0806]/[0.97] backdrop-blur-xl"
       role="dialog"
       aria-modal="true"
       aria-label={`Kapitel: ${isl.title}`}
