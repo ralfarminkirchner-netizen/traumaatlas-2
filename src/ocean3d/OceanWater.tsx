@@ -7,9 +7,10 @@ import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL } from "./waves";
 import { registerRipple3D } from "./projStore";
-import { w2x, w2z } from "./coords";
+import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
 import { MOON_DIR } from "./SkyDome";
+import { ISLANDS } from "../ocean/world";
 
 // ── Shader ───────────────────────────────────────────────────────────────────
 
@@ -54,9 +55,14 @@ uniform vec3 uMoonDir;
 uniform vec3 uMoonColor;
 uniform vec3 uDeepColor;
 uniform vec3 uShallowColor;
+uniform vec3 uShallowWarm;
 uniform vec3 uFoamColor;
 uniform float uDetail; // Stärke der Detail-Normals (distanzgesteuert)
 uniform float uTime;
+uniform float uSheen;  // 0 = nah, 1 = Übersicht: breite Mondschein-Bahn
+uniform vec2 uMoonAz;  // normierter Mond-Azimut (xz-Ebene)
+uniform vec4 uIslands[10]; // x, z, Landradius, ungenutzt
+uniform vec3 uIslandGlow[10]; // Lichtpool-Farbe je Insel
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -106,19 +112,52 @@ void main() {
   // Fresnel (Schlick)
   float f = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
 
-  // Planare Reflexion, projektiv + Wellen-Distortion
-  vec2 ruv = vRefl.xy / max(vRefl.w, 1e-4);
-  ruv += N.xz * 0.034;
-  ruv = clamp(ruv, vec2(0.002), vec2(0.998));
+  // Planare Reflexion, projektiv + Wellen-Distortion.
+  // Edge-Maske: außerhalb des Spiegel-Frustums kein Clamp-Smear.
+  vec2 ruvRaw = vRefl.xy / max(vRefl.w, 1e-4);
+  ruvRaw += N.xz * 0.034;
+  vec2 inEdge = smoothstep(0.0, 0.05, ruvRaw) * (1.0 - smoothstep(0.95, 1.0, ruvRaw));
+  float reflMask = inEdge.x * inEdge.y;
+  vec2 ruv = clamp(ruvRaw, vec2(0.002), vec2(0.998));
   vec3 refl = texture2D(tReflect, ruv).rgb;
 
   // Tiefe/Untiefe: Kämme heller, Täler schwarzblau
   float heightMix = clamp(vWorldPos.y * 1.4 + 0.35, 0.0, 1.0);
   vec3 waterBody = mix(uDeepColor, uShallowColor, heightMix * 0.55);
 
+  // ── Inseln: Untiefen, Küstengischt, Lichtpools, weiche Schatten ──
+  float shal = 0.0;
+  float coastFoam = 0.0;
+  vec3 glow = vec3(0.0);
+  float shad = 0.0;
+  for (int i = 0; i < 10; i++) {
+    vec4 isl = uIslands[i];
+    vec2 d = vWorldPos.xz - isl.xy;
+    float dd = length(d);
+    float shore = dd - isl.z; // < 0 landseitig
+    // Untiefe über dem Shelf
+    shal = max(shal, smoothstep(isl.z * 0.30, -isl.z * 0.22, shore));
+    // Küstengischt: Ring an der Wasserlinie
+    coastFoam += exp(-pow((dd - isl.z * 1.06) / (isl.z * 0.16), 2.0));
+    // Lichtpool der Insel (eng um die Küste, verhältnismäßig dunkel)
+    glow += uIslandGlow[i] * exp(-pow(max(shore, 0.0) / (isl.z * 0.8), 2.0));
+    // weicher Schatten auf der mondabgewandten Seite
+    float along = dot(d, -uMoonAz);
+    float prp = dot(d, vec2(-uMoonAz.y, uMoonAz.x));
+    float slen = isl.z * 3.0;
+    float smask = smoothstep(0.0, isl.z * 0.35, along) * (1.0 - smoothstep(slen * 0.6, slen, along));
+    float swid = isl.z * (1.05 - 0.55 * along / slen);
+    shad = max(shad, smask * (1.0 - smoothstep(swid * 0.55, swid, abs(prp))) * 0.45);
+  }
+  shal = min(shal, 1.0);
+
+  // Untiefen: flacheres, wärmeres Wasser über dem Shelf
+  waterBody = mix(waterBody, uShallowWarm, shal * 0.42);
+
   // Wasserkörper + Reflexion über Fresnel; leichter Indigo-Ambientlift,
-  // damit die Schattenseite nie zu Plastik-Schwarz kippt
-  vec3 col = mix(waterBody, refl, clamp(f * 1.35 + 0.26, 0.0, 1.0));
+  // damit die Schattenseite nie zu Plastik-Schwarz kippt.
+  // Reflexions-Basis niedrig: aus der Höhe kein heller Horizont-Wash.
+  vec3 col = mix(waterBody, refl, clamp(f * 1.25 + 0.15, 0.0, 1.0) * reflMask);
   col += vec3(0.045, 0.07, 0.11) * (1.0 - f) * 0.55;
 
   // Mondspekular + Glitzerpfad
@@ -128,11 +167,25 @@ void main() {
   float spec = pow(dh, 1400.0) * (0.45 + 0.95 * sparkle);
   spec += pow(dh, 110.0) * 0.10;
   col += uMoonColor * spec;
+  // Übersichts-Sheen: weiche Mondbahn — nur in Blickrichtung des Mondes
+  float dhBroad = max(dot(normalize(vNormal), H), 0.0);
+  vec2 viewAz = normalize(vWorldPos.xz - cameraPosition.xz + vec2(1e-4));
+  float azAlign = max(dot(viewAz, uMoonAz), 0.0);
+  col += uMoonColor * pow(dhBroad, 26.0) * uSheen * 0.22 * (0.2 + 0.8 * azAlign * azAlign);
 
-  // Kamm-Gischt + Ringwellen-Gischt
+  // Insel-Lichtpools, leicht schimmernd mit dem Wellengang
+  float shim = 0.6 + 0.4 * vnoise(vWorldPos.xz * 2.2 + uTime * 0.35);
+  col += glow * (0.05 + 0.04 * shim);
+
+  // Kamm-Gischt + Ringwellen-Gischt + Küstengischt (atmet mit den Wellen)
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
   float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN));
-  col = mix(col, uFoamColor, foam * 0.38);
+  float breathe = 0.30 + 0.70 * smoothstep(-0.06, 0.30, vWorldPos.y);
+  foam += smoothstep(0.55, 1.05, coastFoam * (0.55 + 0.65 * foamN) * breathe);
+  col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
+
+  // weiche Insel-Schatten (das Wasser empfängt keine echten Shadow-Maps)
+  col *= 1.0 - shad;
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -224,6 +277,13 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     const ripples: THREE.Vector4[] = [];
     for (let i = 0; i < RIPPLE_COUNT; i++) ripples.push(new THREE.Vector4(0, 0, -100, 0));
 
+    // Insel-Uniforms: Position + Landradius + Lichtpool-Farbe (statisch)
+    const islandVec = ISLANDS.map((isl) => new THREE.Vector4(w2x(isl.x), w2z(isl.y), isl.r * S, 1));
+    const islandGlow = ISLANDS.map((isl) =>
+      new THREE.Color(isl.ground[2]).lerp(new THREE.Color("#ffd9a0"), 0.42).multiplyScalar(0.55),
+    );
+    const moonAz = new THREE.Vector2(MOON_DIR.x, MOON_DIR.z).normalize();
+
     const material = new THREE.ShaderMaterial({
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -239,8 +299,13 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uMoonColor: { value: new THREE.Color("#f7e7c2") },
           uDeepColor: { value: new THREE.Color("#071423") },
           uShallowColor: { value: new THREE.Color("#10404a") },
+          uShallowWarm: { value: new THREE.Color("#12332f") },
           uFoamColor: { value: new THREE.Color("#aebdb6") },
           uDetail: { value: 1 },
+          uSheen: { value: 0 },
+          uMoonAz: { value: moonAz },
+          uIslands: { value: islandVec },
+          uIslandGlow: { value: islandGlow },
           uRipples: { value: ripples },
         },
       ]),
@@ -282,16 +347,25 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     calmSm.current += (target - calmSm.current) * 0.02;
     mat.uniforms.uCalm.value = calmSm.current;
 
-    // Reflexions-Pass: Szene aus gespiegelter Kamera ins RT
+    // Übersichts-Sheen aus der Kamerahöhe ableiten
+    const sheenT = THREE.MathUtils.clamp((camera.position.y - 9) / 30, 0, 1);
+    mat.uniforms.uSheen.value += (sheenT - mat.uniforms.uSheen.value) * 0.04;
+
+    // Reflexions-Pass: Szene aus gespiegelter Kamera ins RT.
+    // Tone Mapping für den Pass AUS — das RT hält lineare Werte,
+    // sonst wird die Reflexion doppelt getont (zu helle Wash).
     const mesh = meshRef.current;
     if (mesh) {
       updateMirror(camera, mirrorCam, texMatrix);
       mesh.visible = false;
       const prevRT = gl.getRenderTarget();
+      const prevTone = gl.toneMapping;
+      gl.toneMapping = THREE.NoToneMapping;
       gl.setRenderTarget(rt);
       gl.clear();
       gl.render(scene, mirrorCam);
       gl.setRenderTarget(prevRT);
+      gl.toneMapping = prevTone;
       mesh.visible = true;
     }
   });

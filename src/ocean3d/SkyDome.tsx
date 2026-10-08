@@ -45,7 +45,7 @@ void main() {
   float lowBand = pow(clamp(1.0 - abs(d.y) * 4.2, 0.0, 1.0), 2.6);
   col += uAmber * pow(azAlign, 4.5) * lowBand * 0.38;
   // schwaches Gegenlicht rund um den Horizont
-  col += uAmber * 0.04 * lowBand;
+  col += uAmber * 0.02 * lowBand;
 
   // Sterne: sphärisches Raster, nur oberhalb des Horizonts
   if (d.y > 0.015) {
@@ -95,7 +95,7 @@ export function SkyDome() {
           uMoonDir: { value: MOON_DIR.clone() },
           uMoonColor: { value: new THREE.Color("#f7e7c2") },
           uZenith: { value: new THREE.Color("#050a16") },
-          uHorizon: { value: new THREE.Color("#132230") },
+          uHorizon: { value: new THREE.Color("#0e1a26") },
           uAmber: { value: new THREE.Color("#b06f24") },
           uTime: { value: 0 },
         },

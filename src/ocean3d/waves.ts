@@ -107,9 +107,11 @@ vec3 gerstner(vec2 xz, out vec3 nrm, out float crest) {
     dPdz += vec3(-qwa * a.x * a.y * s, wa * a.y * c, -qwa * a.y * a.y * s);
   }
   nrm = normalize(cross(dPdz, dPdx));
-  // Jacobi-Determinante der XZ-Verdrängung: <0 → Kamm faltet über (Schaum)
+  // Jacobi-Determinante der XZ-Verdrängung: Kamm-Schätzung.
+  // Kalibriert an der gemessenen Verteilung (j ≈ 0.87..1.15): vereinzelt
+  // brechende Kämme, nie flächendeckend.
   float j = dPdx.x * dPdz.z - dPdx.z * dPdz.x;
-  crest = smoothstep(0.55, -0.25, j);
+  crest = smoothstep(0.945, 0.885, j);
   return p;
 }
 `;
