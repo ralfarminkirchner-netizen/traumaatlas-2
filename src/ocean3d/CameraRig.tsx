@@ -45,17 +45,21 @@ export function CameraRig() {
     const speed = Math.hypot(vx, vy);
     let targetYaw = 0;
     if (speed > 40) {
-      // leicht in Fahrtrichtung gecrabbter Blick
-      targetYaw = THREE.MathUtils.clamp(Math.atan2(vx, -vy) * 0.22, -0.35, 0.35);
+      // nur noch eine leise Andeutung von Kurs — kein Kippen der Welt
+      targetYaw = THREE.MathUtils.clamp(Math.atan2(vx, -vy) * 0.12, -0.2, 0.2);
     }
-    const targetRoll = -targetYaw * 0.35;
+    const targetRoll = -targetYaw * 0.1;
+
+    // Beim Drag: direkte Kopplung (kein Gummi), Schweben fast aus
+    const dragging = projStore.dragging;
 
     // Leerlauf-Schweben: Wellengang an der Kameraposition + langsames Atmen
-    const bob = waveHeight(tx, tz, t, projStore.calm) * 0.35;
-    const sway = Math.sin(t * 0.23) * 0.4 * (1 - ovF);
+    const bobAmp = dragging ? 0.12 : 0.35;
+    const bob = waveHeight(tx, tz, t, projStore.calm) * bobAmp;
+    const sway = Math.sin(t * 0.23) * 0.15 * (1 - ovF) * (dragging ? 0.3 : 1);
 
     const sm = smoothed.current;
-    const k = 1 - Math.pow(0.002, dt); // weiches Exponential
+    const k = dragging ? 1 - Math.pow(0.00005, dt) : 1 - Math.pow(0.002, dt);
     const kSlow = 1 - Math.pow(0.02, dt);
     sm.x += (tx - sm.x) * k;
     sm.z += (tz - sm.z) * k;

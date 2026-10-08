@@ -17,6 +17,10 @@ export const projStore = {
   calm: 0,
   /** Klick auf eine 3D-Kapitel-Formation → OceanStage-Segelfluss */
   onSail: null as ((id: string) => void) | null,
+  /** Zeitpunkt des letzten 3D-Treffers (Boje/Formation) — Stage überspringt dann Wasser-Klick */
+  hitAt: 0,
+  /** Zeiger zieht gerade die Welt (Drag-Pan) — Kamera folgt dann direkter */
+  dragging: false,
 };
 
 // ── Ringwellen-Brücke: OceanStage meldet Wasser-Kontakte ─────
@@ -28,6 +32,17 @@ export function registerRipple3D(fn: RippleFn | null) {
 /** Weltkoordinaten (2D-Welt 5200×3200), Stärke ~0..2 */
 export function splat3D(wx: number, wy: number, strength = 1) {
   rippleFn?.(wx, wy, strength);
+}
+
+// ── Bildschirm → Wasserebene (Klick-segeln): OceanCanvas registriert den Raycast ─────
+type ScreenToWaterFn = (cx: number, cy: number) => { wx: number; wy: number } | null;
+let screenToWaterFn: ScreenToWaterFn | null = null;
+export function registerScreenToWater(fn: ScreenToWaterFn | null) {
+  screenToWaterFn = fn;
+}
+/** Bildschirmposition (Client-px) → Weltpunkt auf der Wasserebene (2D-Weltkoordinaten) */
+export function screenToWater(cx: number, cy: number) {
+  return screenToWaterFn?.(cx, cy) ?? null;
 }
 
 // QA-/Debug-Spiegel: Projektionen am Window lesbar (Bojen-Klick-Test etc.)

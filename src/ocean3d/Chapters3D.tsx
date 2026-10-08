@@ -92,6 +92,7 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
 
   const click = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
+    projStore.hitAt = performance.now(); // Stage: kein Wasser-Klick-Segeln dahinter
     projStore.onSail?.(isl.id);
   };
   const over = (e: ThreeEvent<PointerEvent>) => { e.stopPropagation(); document.body.style.cursor = "pointer"; };

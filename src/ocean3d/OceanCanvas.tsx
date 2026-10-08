@@ -4,9 +4,10 @@
 
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { useEffect } from "react";
 import { ISLANDS } from "../ocean/world";
-import { w2x, w2z } from "./coords";
-import { projStore } from "./projStore";
+import { w2x, w2z, x2w, z2w } from "./coords";
+import { projStore, registerScreenToWater } from "./projStore";
 import { CameraRig } from "./CameraRig";
 import { OceanWater } from "./OceanWater";
 import { SkyDome } from "./SkyDome";
@@ -14,8 +15,33 @@ import { Chapters3D } from "./Chapters3D";
 import { DriftParticles } from "./DriftParticles";
 import { Phenomena3D } from "./Phenomena3D";
 import { WakeRibbon } from "./WakeRibbon";
+import { Constellations3D } from "./Constellations3D";
 
 const _v = new THREE.Vector3();
+const _ray = new THREE.Raycaster();
+const _ndc = new THREE.Vector2();
+const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+const _hit = new THREE.Vector3();
+
+/** Registriert den Bildschirm→Wasser-Raycast (Klick-segeln aus der DOM-Stage). */
+function ScreenToWaterBridge() {
+  const camera = useThree((s) => s.camera);
+  const size = useThree((s) => s.size);
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    registerScreenToWater((cx, cy) => {
+      const rect = gl.domElement.getBoundingClientRect();
+      _ndc.set(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+      _ray.setFromCamera(_ndc, camera);
+      if (!_ray.ray.intersectPlane(_plane, _hit)) return null;
+      // Weltgrenzen der Wasserebene beachten (Plane ist 640×640 um den Ursprung)
+      if (Math.abs(_hit.x) > 300 || Math.abs(_hit.z) > 300) return null;
+      return { wx: x2w(_hit.x), wy: z2w(_hit.z) };
+    });
+    return () => registerScreenToWater(null);
+  }, [camera, gl, size]);
+  return null;
+}
 
 /** Projiziert Kapitel-Anker ins Bild und schreibt sie in den projStore (DOM-Labels). */
 function LabelsBridge() {
@@ -60,10 +86,12 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       <directionalLight position={[-30, 26, -57]} intensity={0.8} color="#d8e2f0" />
       <CameraRig />
       <LabelsBridge />
+      <ScreenToWaterBridge />
       <SkyDome />
       <OceanWater mobile={mobile} />
       <WakeRibbon />
       <Chapters3D />
+      <Constellations3D />
       <DriftParticles mobile={mobile} />
       <Phenomena3D />
     </Canvas>

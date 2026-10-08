@@ -56,6 +56,7 @@ function Buoy({ p, selected }: { p: Phenomenon; selected: boolean }) {
 
   const click = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
+    projStore.hitAt = performance.now(); // Stage: kein Wasser-Klick-Segeln dahinter
     selectPhenomenon(selected ? null : p.id);
   };
 

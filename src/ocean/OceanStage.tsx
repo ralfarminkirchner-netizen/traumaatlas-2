@@ -15,7 +15,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { webgl2Available } from "@/hooks/use-webgl";
 import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
-import { splat3D, projStore } from "../ocean3d/projStore";
+import { splat3D, projStore, screenToWater } from "../ocean3d/projStore";
 import { seaBefund } from "@/kinformer/seaBefund";
 
 // ── Welt-Schicht-Transform ───────────────────────────────────────────────────
@@ -527,6 +527,17 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
           </span>
           <span className="text-[11px] tracking-[0.2em] text-white/45">{STAGES[stage]}</span>
         </div>
+        {/* was als Nächstes wächst — konkret, ohne Punktejagd */}
+        {stage < 3 && (
+          <p className="mt-1 text-[10px] leading-relaxed text-white/30">
+            {(() => {
+              const score = progress.visited.length + progress.understood.length + progress.practiced.length * 2 + progress.bridges * 2 + Math.min(progress.calmMoments, 5);
+              const next = [6, 16, 30][stage];
+              const missing = Math.max(0, next - score);
+              return `Nächste Lichtung „${STAGES[stage + 1]}": noch ${missing} — Inseln besuchen, Brücken öffnen, Übungen ansehen`;
+            })()}
+          </p>
+        )}
       </div>
 
       <div className="pointer-events-auto flex flex-col items-end gap-2">
@@ -707,6 +718,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         if (p.down) {
           if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6) p.moved = true;
           if (p.moved && !ocean.view) {
+            projStore.dragging = true;
             const c = ocean.cam;
             setCamTarget({ x: c.x - dx / c.zoom, y: c.y - dy / c.zoom });
           }
@@ -727,6 +739,21 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       },
       onPointerUp: () => {
         pointer.current.down = false;
+        projStore.dragging = false;
+      },
+      // Klick aufs offene Wasser (3D): gezielt dorthin segeln — direkte Kontrolle
+      onClick: (e: React.MouseEvent) => {
+        if (!use3D || ocean.view) return;
+        const p = pointer.current;
+        if (p.moved) return; // Drag war ein Pan
+        if (performance.now() - projStore.hitAt < 200) return; // 3D-Treffer (Boje/Formation)
+        const t = e.target as HTMLElement;
+        if (t.closest('[role="dialog"]') || t.closest("button") || t.closest("input") || t.closest("select") || t.closest("form")) return;
+        const w = screenToWater(e.clientX, e.clientY);
+        if (w) {
+          setCamTarget({ x: w.wx, y: w.wy });
+          splat3D(w.wx, w.wy, 0.9);
+        }
       },
       onWheel: (e: React.WheelEvent) => {
         if (ocean.view) return;
@@ -777,6 +804,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       onPointerDown={handlers.onPointerDown}
       onPointerMove={handlers.onPointerMove}
       onPointerUp={handlers.onPointerUp}
+      onClick={handlers.onClick}
       onWheel={handlers.onWheel}
       role="application"
       aria-label="Das Meer der Phänomene — Inseln ansegeln, Phänomene eingeben, Wasser berühren"
