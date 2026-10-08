@@ -10,6 +10,10 @@ export default defineConfig({
   server: {
     port: 3000,
   },
+  preview: {
+    // Railway-Domain + weitere Railway-Hosts zulassen (vite preview prüft Host-Header)
+    allowedHosts: ["traumaatlas-3-production.up.railway.app", ".up.railway.app"],
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
