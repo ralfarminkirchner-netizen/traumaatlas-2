@@ -168,6 +168,11 @@ export function getOceanState(): OceanState {
   return state;
 }
 
+// QA-/Debug-Spiegel: Zustand am Window lesbar (Smoke-Tests prüfen Arme/Auswahl)
+if (typeof window !== "undefined") {
+  (window as unknown as { __ta3ocean?: typeof getOceanState }).__ta3ocean = getOceanState;
+}
+
 export function subscribeOcean(fn: Listener): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
@@ -189,16 +194,36 @@ function genId() {
   return `ph-${Date.now().toString(36)}-${nextPhenId++}`;
 }
 
+/** Phänomen-Position aus Inseln heraushalten (Bojen gehören auf offenes Wasser). */
+function avoidIslands(x: number, y: number): { x: number; y: number } {
+  for (const isl of ISLANDS) {
+    const dx = x - isl.x;
+    const dy = y - isl.y;
+    const d = Math.hypot(dx, dy);
+    const min = isl.r * 1.45;
+    if (d < min) {
+      const push = (min - d) / Math.max(d, 1);
+      x += dx * push;
+      y += dy * push;
+    }
+  }
+  return {
+    x: Math.min(WORLD.w - 120, Math.max(120, x)),
+    y: Math.min(WORLD.h - 120, Math.max(120, y)),
+  };
+}
+
 /** Freitext-Phänomen ins Meer geben. Erscheint als leuchtender Körper nahe der Mitte. */
 export function addPhenomenon(label: string): Phenomenon {
   const links = mapTextToAtlas(label);
   const jitter = () => (Math.random() - 0.5) * 360;
+  const pos = avoidIslands(state.cam.x + jitter(), state.cam.y + jitter() * 0.6);
   const ph: Phenomenon = {
     id: genId(),
     label: label.trim().slice(0, 80),
     user: true,
-    x: state.cam.x + jitter(),
-    y: state.cam.y + jitter() * 0.6,
+    x: pos.x,
+    y: pos.y,
     vx: 0,
     vy: 0,
     color: "#e8b86d",
@@ -223,12 +248,13 @@ export function addAtlasPhenomenon(targetId: string, type: TargetType, label: st
     return existing;
   }
   const jitter = () => (Math.random() - 0.5) * 500;
+  const pos = avoidIslands(state.cam.x + jitter(), state.cam.y + jitter());
   const ph: Phenomenon = {
     id: genId(),
     label,
     user: false,
-    x: state.cam.x + jitter(),
-    y: state.cam.y + jitter(),
+    x: pos.x,
+    y: pos.y,
     vx: 0,
     vy: 0,
     color: TYPE_COLORS[type],

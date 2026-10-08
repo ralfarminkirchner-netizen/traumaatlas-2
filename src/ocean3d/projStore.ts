@@ -27,3 +27,8 @@ export function registerRipple3D(fn: RippleFn | null) {
 export function splat3D(wx: number, wy: number, strength = 1) {
   rippleFn?.(wx, wy, strength);
 }
+
+// QA-/Debug-Spiegel: Projektionen am Window lesbar (Bojen-Klick-Test etc.)
+if (typeof window !== "undefined") {
+  (window as unknown as { __ta3proj?: typeof projStore }).__ta3proj = projStore;
+}

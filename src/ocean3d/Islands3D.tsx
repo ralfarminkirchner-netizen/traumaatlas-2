@@ -217,7 +217,7 @@ function buildIsland(isl: IslandDef, seed: number, mobile: boolean): IslandGeo {
 // ── Halo-Textur (einmalig geteilt) ───────────────────────────────────────────
 
 let haloTex: THREE.CanvasTexture | null = null;
-function getHaloTexture(): THREE.CanvasTexture {
+export function getHaloTexture(): THREE.CanvasTexture {
   if (haloTex) return haloTex;
   const c = document.createElement("canvas");
   c.width = c.height = 128;

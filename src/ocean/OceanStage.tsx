@@ -258,19 +258,47 @@ function PhenomenaLayer() {
 
 // ── Detail-Popover eines Phänomens ───────────────────────────────────────────
 
-function PhenomenonCard() {
+function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
   const { phenomena, selected, cam } = useOcean();
   const p = phenomena.find((x) => x.id === selected);
+  const ref = useRef<HTMLDivElement>(null);
+
+  // 3D: Karte folgt der Bojen-Projektion aus dem projStore (60 fps ohne Re-Render)
+  useEffect(() => {
+    if (!mode3d) return;
+    let raf = 0;
+    const tick = () => {
+      const el = ref.current;
+      if (el && p) {
+        const pr = projStore.phen.get(p.id);
+        const on = !!pr?.visible;
+        el.style.opacity = on ? "1" : "0";
+        el.style.pointerEvents = on ? "auto" : "none";
+        if (pr) {
+          el.style.transform = `translate(-50%, -112%) translate(${pr.sx.toFixed(1)}px, ${pr.sy.toFixed(1)}px)`;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [mode3d, p]);
+
   if (!p) return null;
 
-  return (
-    <div
-      className="absolute z-20 w-[330px] max-w-[86vw] rounded-2xl border border-white/10 bg-[#0d0a07]/92 p-5 shadow-2xl backdrop-blur-md"
-      style={{
+  const style: React.CSSProperties = mode3d
+    ? { left: 0, top: 0, opacity: 0 }
+    : {
         left: p.x * cam.zoom + (typeof window !== "undefined" ? window.innerWidth / 2 - cam.x * cam.zoom : 0),
         top: p.y * cam.zoom + (typeof window !== "undefined" ? window.innerHeight / 2 - cam.y * cam.zoom : 0),
         transform: "translate(-50%, -110%)",
-      }}
+      };
+
+  return (
+    <div
+      ref={ref}
+      className="absolute z-20 w-[330px] max-w-[86vw] rounded-2xl border border-white/10 bg-[#0d0a07]/92 p-5 shadow-2xl backdrop-blur-md"
+      style={style}
       role="dialog"
       aria-label={`Phänomen: ${p.label}`}
     >
@@ -331,6 +359,60 @@ function PhenomenonCard() {
           Schließen
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Bojen-Labels über der 3D-Szene (projStore-Projektion, echte Buttons) ────
+
+function PhenomenaLabels3D() {
+  const { phenomena, selected, cam, view } = useOcean();
+  const refs = useRef(new Map<string, HTMLButtonElement>());
+
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      for (const p of refs.current.keys() && phenomena) {
+        const el = refs.current.get(p.id);
+        if (!el) continue;
+        const pr = projStore.phen.get(p.id);
+        const show = !!pr?.visible && (cam.zoom > 0.45 || selected === p.id) && !view;
+        el.style.opacity = show ? (selected === p.id ? "1" : "0.85") : "0";
+        el.style.pointerEvents = show ? "auto" : "none";
+        if (pr) {
+          el.style.transform = `translate(-50%, -100%) translate(${pr.sx.toFixed(1)}px, ${(pr.sy - 14).toFixed(1)}px)`;
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [phenomena, cam.zoom, selected, view]);
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden">
+      {phenomena.map((p) => (
+        <button
+          key={p.id}
+          ref={(el) => {
+            if (el) refs.current.set(p.id, el);
+            else refs.current.delete(p.id);
+          }}
+          type="button"
+          onClick={(e) => { e.stopPropagation(); selectPhenomenon(selected === p.id ? null : p.id); }}
+          aria-label={`Phänomen öffnen: ${p.label}`}
+          className="absolute left-0 top-0 cursor-pointer whitespace-nowrap rounded-lg border-0 bg-transparent px-2 py-1 opacity-0 transition-opacity duration-300"
+          style={{ willChange: "transform" }}
+        >
+          <span
+            aria-hidden="true"
+            className="block font-display text-[15px] leading-tight text-[#ede4d4]"
+            style={{ textShadow: "0 2px 12px rgba(0,0,0,0.9)" }}
+          >
+            {p.label.length > 26 ? p.label.slice(0, 24) + "…" : p.label}
+          </span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -661,6 +743,8 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
             <OceanCanvas mobile={isMobile} />
           </div>
           <IslandLabels3D onSail={sail} />
+          <PhenomenaLabels3D />
+          <PhenomenonCard mode3d />
         </>
       ) : (
         <>

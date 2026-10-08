@@ -11,6 +11,7 @@ import { OceanWater } from "./OceanWater";
 import { SkyDome } from "./SkyDome";
 import { Islands3D, islandPeakY } from "./Islands3D";
 import { DriftParticles } from "./DriftParticles";
+import { Phenomena3D } from "./Phenomena3D";
 
 const _v = new THREE.Vector3();
 
@@ -78,6 +79,7 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       <OceanWater mobile={mobile} />
       <Islands3D mobile={mobile} />
       <DriftParticles mobile={mobile} />
+      <Phenomena3D />
     </Canvas>
   );
 }
