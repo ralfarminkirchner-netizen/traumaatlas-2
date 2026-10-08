@@ -16,6 +16,7 @@ import { webgl2Available } from "@/hooks/use-webgl";
 import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
 import { splat3D, projStore } from "../ocean3d/projStore";
+import { seaBefund } from "@/kinformer/seaBefund";
 
 // ── Welt-Schicht-Transform ───────────────────────────────────────────────────
 
@@ -263,7 +264,9 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
   const p = phenomena.find((x) => x.id === selected);
   const ref = useRef<HTMLDivElement>(null);
 
-  // 3D: Karte folgt der Bojen-Projektion aus dem projStore (60 fps ohne Re-Render)
+  // 3D: Karte folgt der Bojen-Projektion aus dem projStore (60 fps ohne Re-Render).
+  // Anker-Hysterese (> 30 px): die Karte bleibt klick-stabil, wandert aber mit.
+  const anchor = useRef<{ id: string; x: number; y: number } | null>(null);
   useEffect(() => {
     if (!mode3d) return;
     let raf = 0;
@@ -275,7 +278,14 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
         el.style.opacity = on ? "1" : "0";
         el.style.pointerEvents = on ? "auto" : "none";
         if (pr) {
-          el.style.transform = `translate(-50%, -112%) translate(${pr.sx.toFixed(1)}px, ${pr.sy.toFixed(1)}px)`;
+          const a = anchor.current;
+          if (!a || a.id !== p.id || Math.hypot(pr.sx - a.x, pr.sy - a.y) > 30) {
+            anchor.current = { id: p.id, x: pr.sx, y: pr.sy };
+          }
+          const an = anchor.current;
+          if (an) {
+            el.style.transform = `translate(-50%, -112%) translate(${an.x.toFixed(1)}px, ${an.y.toFixed(1)}px)`;
+          }
         }
       }
       raf = requestAnimationFrame(tick);
@@ -343,6 +353,8 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
         </p>
       )}
 
+      <SeaBefundBlock />
+
       <div className="mt-4 flex items-center justify-between">
         <button
           type="button"
@@ -359,6 +371,28 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
           Schließen
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── KiNFORMER-Befund des Meeres (spektrale Lesart des Phänomen-Netzes) ───────
+
+function SeaBefundBlock() {
+  const { phenomena, arms } = useOcean();
+  const befund = useMemo(() => seaBefund(), [phenomena, arms]);
+  if (!befund.ok || !befund.metrics) return null;
+  const m = befund.metrics;
+  return (
+    <div className="mt-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-2.5" data-testid="kinformer-befund">
+      <p className="text-[9px] uppercase tracking-[0.28em] text-white/35">KiNFORMER-Befund des Meeres</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-white/55">
+        {m.partCount} Teile · {m.relationCount} benannte Beziehungen · {m.clusterCount} Eigenwertcluster
+        {befund.repelling > 0 ? ` · davon ${befund.repelling} abstoßend` : ""}
+        {m.orderedRelations > 0 ? ` · zyklischer Rest ${m.cyclicResidual.toFixed(2)}` : ""}
+      </p>
+      <p className="mt-1 text-[9px] leading-relaxed text-white/25">
+        Spektrale Lesart des Phänomen-Netzes — eine Beobachtung, kein Urteil.
+      </p>
     </div>
   );
 }
@@ -715,6 +749,12 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
     sailTo(id);
     onSail(id);
   };
+
+  // 3D-Klicks auf Kapitel-Formationen laufen über dieselbe Segelfahrt
+  useEffect(() => {
+    projStore.onSail = (id) => sail(id as IslandId);
+    return () => { projStore.onSail = null; };
+  });
 
   const [vw, setVw] = useState(() => (typeof window !== "undefined" ? window.innerWidth : 1280));
   const [vh, setVh] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 800));

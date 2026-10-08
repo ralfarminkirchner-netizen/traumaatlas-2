@@ -101,6 +101,27 @@ try {
       await page.screenshot({ path: `${SHOTS}/phen.png` });
     }
 
+    if (scenario === "arms") {
+      // zwei verwandte Phänomene → ein Arm wächst zwischen ihnen
+      await page.fill("#ta3-phen-input", "Ich bin ständig erschöpft und voller Angst");
+      await page.press("#ta3-phen-input", "Enter");
+      await sleep(1400);
+      // Karte per Klick ins freie Wasser schließen (ESC ist den Kapiteln vorbehalten)
+      await page.mouse.click(1000, 650);
+      await sleep(600);
+      await page.locator("#ta3-phen-input").click();
+      await page.fill("#ta3-phen-input", "Nachts wache ich mit Herzrasen und Panik auf");
+      await page.press("#ta3-phen-input", "Enter");
+      await sleep(1500);
+      await page.mouse.click(1000, 650);
+      await sleep(400);
+      // etwas herauszoomen für den Überblick, dann wachsen lassen
+      await page.mouse.move(720, 420);
+      await page.mouse.wheel(0, 260);
+      await sleep(3000);
+      await page.screenshot({ path: `${SHOTS}/arms.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);

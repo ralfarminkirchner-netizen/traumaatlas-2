@@ -1,15 +1,41 @@
 // TRAUMAATLAS 3 — Smoke-QA über ALLE Bereiche.
-// Run 1: Desktop — Meer, Phänomen + Brücke, alle 10 Kapitel mit Screenshots,
-//        gezielte Interaktionen (Baukasten, Wechsel-Overlays, Lexikon, Wegweiser).
+// Run 1: Desktop — Meer, Phänomen + Brücke, 3D-Checks (Boje/Label/Übersicht),
+//        alle 10 Kapitel mit Screenshots, gezielte Interaktionen.
 // Run 2: reduced-motion — Meer statisch, Lexikon-Videos mit Controls.
 // Run 3: Mobile-Viewport — Meer + zwei Kapitel.
-// Exit 1 bei Konsolenfehlern.
+// Startet den Dev-Server selbst (Port 8471) und räumt auf.
+// Aufruf: node qa/ta3-smoke.mjs [desktop|rm|mobile] (ohne Arg = alle)
+// Exit 1 bei Konsolenfehlern oder fehlgeschlagenen Checks.
+import { spawn } from "node:child_process";
 import { chromium } from "playwright";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, createWriteStream } from "node:fs";
 
-const BASE = "http://localhost:8471/";
+const PORT = 8471;
+const BASE = `http://localhost:${PORT}/`;
 const SHOTS = "/tmp/ta3-qa";
 mkdirSync(SHOTS, { recursive: true });
+
+// ── Dev-Server (vite direkt, damit SIGTERM wirkt) ──
+const log = createWriteStream("/tmp/ta3-dev.log", { flags: "a" });
+const server = spawn(
+  process.execPath,
+  ["node_modules/vite/bin/vite.js", "--port", String(PORT), "--strictPort"],
+  { cwd: new URL("..", import.meta.url).pathname, stdio: ["ignore", "pipe", "pipe"] },
+);
+server.stdout.pipe(log);
+server.stderr.pipe(log);
+const kill = () => { try { server.kill("SIGTERM"); } catch { /* ok */ } };
+process.on("exit", kill);
+process.on("SIGINT", () => { kill(); process.exit(130); });
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitForServer(timeoutMs = 300000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    try { const r = await fetch(BASE); if (r.ok) return; } catch { /* noch nicht da */ }
+    await sleepMs(800);
+  }
+  throw new Error("Dev-Server nicht erreichbar — siehe /tmp/ta3-dev.log");
+}
 
 const CHAPTERS = [
   ["kosmos", "Der große Graph"],
@@ -94,6 +120,41 @@ async function runDesktop() {
   await page.screenshot({ path: `${SHOTS}/02-bruecke.png` });
   await phenCard.getByRole("button", { name: "Schließen" }).click();
   await page.waitForTimeout(400);
+
+  // ── 3D-Checks: Bojen-Raycast → Brückenkarte, Übersichts-Zoom, Insel-Label ──
+  const buoyPos = await page.evaluate(() => {
+    const first = [...(window.__ta3proj?.phen?.values() ?? [])][0];
+    return first && first.visible ? { sx: first.sx, sy: first.sy } : null;
+  });
+  ok(!!buoyPos, "3D: Boje projiziert + sichtbar");
+  if (buoyPos) {
+    await page.mouse.click(buoyPos.sx, buoyPos.sy);
+    await page.waitForTimeout(900);
+    const sel = await page.evaluate(() => window.__ta3ocean?.().selected ?? null);
+    ok(!!sel, "3D: Boje-Klick selektiert Phänomen (Raycast)");
+    ok(await phenCard.count() >= 1, "3D: Brückenkarte nach Boje-Klick sichtbar");
+    await page.screenshot({ path: `${SHOTS}/03-boje-karte.png` });
+    await phenCard.getByRole("button", { name: "Schließen" }).click();
+    await page.waitForTimeout(400);
+  }
+
+  await page.getByRole("button", { name: "Karte" }).click();
+  await page.waitForTimeout(2400);
+  const ov = await page.evaluate(() => window.__ta3ocean?.().overview ?? false);
+  ok(ov === true, "3D: Übersichts-Zoom aktiv");
+  const labelCount = await page.evaluate(() =>
+    [...document.querySelectorAll('button[aria-label$="ansegeln"]')]
+      .filter((el) => el.style.opacity !== "0" && el.style.opacity !== "").length);
+  ok(labelCount >= 5, `3D: Insel-Labels in der Übersicht sichtbar (${labelCount})`);
+  await page.screenshot({ path: `${SHOTS}/04-uebersicht.png` });
+
+  // Insel-Label anklicken → Segelfahrt → Kapitel öffnet sich
+  await page.getByRole("button", { name: /Kosmos: Der große Graph ansegeln/ }).click();
+  const dialogKosmos = page.getByRole("dialog", { name: /Kapitel: Der große Graph/ });
+  await dialogKosmos.waitFor({ state: "visible", timeout: 25000 });
+  ok(await dialogKosmos.count() === 1, "3D: Klick auf Insel-Label öffnet Kapitel");
+  await page.screenshot({ path: `${SHOTS}/05-label-segeln.png` });
+  await closeChapter(page);
 
   // Alle Kapitel durchsegeln
   for (const [id, title] of CHAPTERS) {
@@ -213,9 +274,12 @@ async function runMobile() {
   await browser.close();
 }
 
-await runDesktop();
-await runReduced();
-await runMobile();
+const which = process.argv[2] || "alle";
+await waitForServer();
+if (which === "alle" || which === "desktop") await runDesktop();
+if (which === "alle" || which === "rm") await runReduced();
+if (which === "alle" || which === "mobile") await runMobile();
 
 console.log(failures === 0 ? "\nALLE CHECKS BESTANDEN" : `\n${failures} CHECK(S) FEHLGESCHLAGEN`);
+kill();
 process.exit(failures === 0 ? 0 : 1);

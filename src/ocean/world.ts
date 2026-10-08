@@ -368,7 +368,8 @@ function rebuildArms() {
   for (let i = 0; i < ps.length; i++) {
     for (let j = i + 1; j < ps.length; j++) {
       const rel = relatedness(ps[i], ps[j]);
-      if (rel && rel.strength > 0.3) {
+      // Anziehung wie Abstoßung (Schattenarbeit) wird ein Arm — Vorzeichen entscheidet
+      if (rel && (rel.strength > 0.3 || rel.strength < -0.3)) {
         const existing = state.arms.find((a) => (a.a === ps[i].id && a.b === ps[j].id) || (a.a === ps[j].id && a.b === ps[i].id));
         arms.push({
           a: ps[i].id,
@@ -450,9 +451,15 @@ export function stepPhysics(dt: number) {
     const d = Math.hypot(b.x - a.x, b.y - a.y);
     let growth = arm.growth;
     let latched = arm.latched;
-    if (d < LINK_DIST) growth = Math.min(1, growth + dt * 0.8);
-    if (d < LATCH_DIST && !latched) latched = true;
-    if (d > LINK_DIST * 1.5) { growth = Math.max(0, growth - dt * 0.6); latched = false; }
+    if (arm.strength > 0) {
+      if (d < LINK_DIST) growth = Math.min(1, growth + dt * 0.8);
+      if (d < LATCH_DIST && !latched) latched = true;
+      if (d > LINK_DIST * 1.5) { growth = Math.max(0, growth - dt * 0.6); latched = false; }
+    } else {
+      // Abstoßung: sichtbar, solange sich die Phänomene nahe sind; hakt nie fest
+      if (d < LINK_DIST * 1.4) growth = Math.min(1, growth + dt * 0.8);
+      else growth = Math.max(0, growth - dt * 0.6);
+    }
     if (growth !== arm.growth || latched !== arm.latched) changed = true;
     return { ...arm, growth, latched };
   });

@@ -10,6 +10,7 @@ import { w2x, w2z } from "./coords";
 import { waveHeight } from "./waves";
 import { projStore } from "./projStore";
 import { makeRng } from "./islandShapes";
+import { getHaloTexture } from "./textures";
 
 const COUNT_DESKTOP = 70;
 const COUNT_MOBILE = 30;
@@ -78,7 +79,9 @@ export function DriftParticles({ mobile = false }: { mobile?: boolean }) {
     <points ref={ref} geometry={geometry} frustumCulled={false} name="drift-particles">
       <pointsMaterial
         color="#f0cf98"
-        size={mobile ? 0.3 : 0.22}
+        size={mobile ? 0.34 : 0.26}
+        map={getHaloTexture()}
+        alphaTest={0.01}
         sizeAttenuation
         transparent
         opacity={0.42}

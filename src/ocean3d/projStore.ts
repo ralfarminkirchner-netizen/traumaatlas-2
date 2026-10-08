@@ -15,6 +15,8 @@ export const projStore = {
   phen: new Map<string, { sx: number; sy: number; visible: boolean }>(),
   /** stille Mechanik: 0 = normal, 1 = ganz still */
   calm: 0,
+  /** Klick auf eine 3D-Kapitel-Formation → OceanStage-Segelfluss */
+  onSail: null as ((id: string) => void) | null,
 };
 
 // ── Ringwellen-Brücke: OceanStage meldet Wasser-Kontakte ─────

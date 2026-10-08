@@ -55,14 +55,17 @@ uniform vec3 uMoonDir;
 uniform vec3 uMoonColor;
 uniform vec3 uDeepColor;
 uniform vec3 uShallowColor;
-uniform vec3 uShallowWarm;
 uniform vec3 uFoamColor;
 uniform float uDetail; // Stärke der Detail-Normals (distanzgesteuert)
 uniform float uTime;
 uniform float uSheen;  // 0 = nah, 1 = Übersicht: breite Mondschein-Bahn
 uniform vec2 uMoonAz;  // normierter Mond-Azimut (xz-Ebene)
-uniform vec4 uIslands[10]; // x, z, Landradius, ungenutzt
-uniform vec3 uIslandGlow[10]; // Lichtpool-Farbe je Insel
+// Farbiges Lichtfeld: 10 Kapitel-Formationen (statisch) + bis zu 14 Bojen (dynamisch)
+uniform vec4 uPools[10];    // x, z, radius, grundintensität
+uniform vec3 uPoolColor[10];
+uniform vec4 uBuoys[14];    // x, z, radius, intensität (pro Frame)
+uniform vec3 uBuoyColor[14];
+uniform int uBuoyCount;
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -125,35 +128,6 @@ void main() {
   float heightMix = clamp(vWorldPos.y * 1.4 + 0.35, 0.0, 1.0);
   vec3 waterBody = mix(uDeepColor, uShallowColor, heightMix * 0.55);
 
-  // ── Inseln: Untiefen, Küstengischt, Lichtpools, weiche Schatten ──
-  float shal = 0.0;
-  float coastFoam = 0.0;
-  vec3 glow = vec3(0.0);
-  float shad = 0.0;
-  for (int i = 0; i < 10; i++) {
-    vec4 isl = uIslands[i];
-    vec2 d = vWorldPos.xz - isl.xy;
-    float dd = length(d);
-    float shore = dd - isl.z; // < 0 landseitig
-    // Untiefe über dem Shelf
-    shal = max(shal, smoothstep(isl.z * 0.30, -isl.z * 0.22, shore));
-    // Küstengischt: Ring an der Wasserlinie
-    coastFoam += exp(-pow((dd - isl.z * 1.06) / (isl.z * 0.16), 2.0));
-    // Lichtpool der Insel (eng um die Küste, verhältnismäßig dunkel)
-    glow += uIslandGlow[i] * exp(-pow(max(shore, 0.0) / (isl.z * 0.8), 2.0));
-    // weicher Schatten auf der mondabgewandten Seite
-    float along = dot(d, -uMoonAz);
-    float prp = dot(d, vec2(-uMoonAz.y, uMoonAz.x));
-    float slen = isl.z * 3.0;
-    float smask = smoothstep(0.0, isl.z * 0.35, along) * (1.0 - smoothstep(slen * 0.6, slen, along));
-    float swid = isl.z * (1.05 - 0.55 * along / slen);
-    shad = max(shad, smask * (1.0 - smoothstep(swid * 0.55, swid, abs(prp))) * 0.45);
-  }
-  shal = min(shal, 1.0);
-
-  // Untiefen: flacheres, wärmeres Wasser über dem Shelf
-  waterBody = mix(waterBody, uShallowWarm, shal * 0.42);
-
   // Wasserkörper + Reflexion über Fresnel; leichter Indigo-Ambientlift,
   // damit die Schattenseite nie zu Plastik-Schwarz kippt.
   // Reflexions-Basis niedrig: aus der Höhe kein heller Horizont-Wash.
@@ -171,21 +145,36 @@ void main() {
   float dhBroad = max(dot(normalize(vNormal), H), 0.0);
   vec2 viewAz = normalize(vWorldPos.xz - cameraPosition.xz + vec2(1e-4));
   float azAlign = max(dot(viewAz, uMoonAz), 0.0);
-  col += uMoonColor * pow(dhBroad, 26.0) * uSheen * 0.22 * (0.2 + 0.8 * azAlign * azAlign);
+  col += uMoonColor * pow(dhBroad, 26.0) * uSheen * 0.15 * (0.2 + 0.8 * azAlign * azAlign);
 
-  // Insel-Lichtpools, leicht schimmernd mit dem Wellengang
+  // ── Farbiges Lichtfeld: Kapitel-Pools + Bojen-Lichter ──
+  // Die Wellen fangen das Licht: dem Licht zugewandte Flanken und Kämme
+  // glänzen stärker — das Feld lebt mit dem Wellengang.
   float shim = 0.6 + 0.4 * vnoise(vWorldPos.xz * 2.2 + uTime * 0.35);
-  col += glow * (0.05 + 0.04 * shim);
+  vec3 field = vec3(0.0);
+  for (int i = 0; i < 10; i++) {
+    vec4 P = uPools[i];
+    vec2 d = vWorldPos.xz - P.xy;
+    float d2 = dot(d, d);
+    float fall = exp(-d2 / max(P.z * P.z, 0.01));
+    vec2 dn = d * inversesqrt(max(d2, 0.01));
+    float facing = 0.5 + 0.5 * max(dot(-N.xz, dn) * 1.7, 0.0);
+    field += uPoolColor[i] * P.w * fall * facing;
+  }
+  for (int i = 0; i < 14; i++) {
+    if (i >= uBuoyCount) break;
+    vec4 B = uBuoys[i];
+    vec2 d = vWorldPos.xz - B.xy;
+    float fall = exp(-dot(d, d) / max(B.z * B.z, 0.01));
+    field += uBuoyColor[i] * B.w * fall;
+  }
+  float crestLift = clamp(vWorldPos.y * 1.5 + 0.55, 0.0, 1.0);
+  col += min(field, vec3(1.6)) * (0.5 + 0.5 * crestLift) * (0.6 + 0.4 * shim);
 
-  // Kamm-Gischt + Ringwellen-Gischt + Küstengischt (atmet mit den Wellen)
+  // Kamm-Gischt + Ringwellen-Gischt
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
   float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN));
-  float breathe = 0.30 + 0.70 * smoothstep(-0.06, 0.30, vWorldPos.y);
-  foam += smoothstep(0.55, 1.05, coastFoam * (0.55 + 0.65 * foamN) * breathe);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
-
-  // weiche Insel-Schatten (das Wasser empfängt keine echten Shadow-Maps)
-  col *= 1.0 - shad;
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -254,6 +243,25 @@ function updateMirror(src: THREE.Camera, mirror: THREE.PerspectiveCamera, texMat
   texMatrix.copy(_bias).multiply(mirror.projectionMatrix).multiply(mirror.matrixWorldInverse);
 }
 
+// ── Lichtfeld-Brücke: Szene füttert, Wasser liest ────────────────────────────
+
+export interface FieldLight { x: number; z: number; r: number; i: number; c: THREE.Color }
+
+const MAX_BUOYS = 14;
+const _pools: FieldLight[] = [];
+const _buoys: FieldLight[] = [];
+
+/** Kapitel-Lichtpools (10, statisch bis auf visited-Intensität) — Aufruf pro Frame ok. */
+export function setWaterPools(list: FieldLight[]) {
+  _pools.length = 0;
+  _pools.push(...list.slice(0, 10));
+}
+/** Bojen-Lichter (dynamisch, pulsierend) — Aufruf pro Frame ok. */
+export function setWaterBuoys(list: FieldLight[]) {
+  _buoys.length = 0;
+  _buoys.push(...list.slice(0, MAX_BUOYS));
+}
+
 // ── Komponente ───────────────────────────────────────────────────────────────
 
 export function OceanWater({ mobile = false }: { mobile?: boolean }) {
@@ -277,11 +285,20 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     const ripples: THREE.Vector4[] = [];
     for (let i = 0; i < RIPPLE_COUNT; i++) ripples.push(new THREE.Vector4(0, 0, -100, 0));
 
-    // Insel-Uniforms: Position + Landradius + Lichtpool-Farbe (statisch)
-    const islandVec = ISLANDS.map((isl) => new THREE.Vector4(w2x(isl.x), w2z(isl.y), isl.r * S, 1));
-    const islandGlow = ISLANDS.map((isl) =>
-      new THREE.Color(isl.ground[2]).lerp(new THREE.Color("#ffd9a0"), 0.42).multiplyScalar(0.55),
+    // Kapitel-Pools + Bojen-Uniforms (Werte werden pro Frame aus der
+    // Lichtfeld-Brücke übernommen; hier nur die Struktur + Startfarben)
+    const poolVec = ISLANDS.map((isl) =>
+      new THREE.Vector4(w2x(isl.x), w2z(isl.y), isl.r * S * 2.4, 0.5),
     );
+    const poolCol = ISLANDS.map((isl) =>
+      new THREE.Color(isl.ground[2]).lerp(new THREE.Color("#ffd9a0"), 0.35),
+    );
+    const buoyVec: THREE.Vector4[] = [];
+    const buoyCol: THREE.Color[] = [];
+    for (let i = 0; i < MAX_BUOYS; i++) {
+      buoyVec.push(new THREE.Vector4(0, 0, 1, 0));
+      buoyCol.push(new THREE.Color(0, 0, 0));
+    }
     const moonAz = new THREE.Vector2(MOON_DIR.x, MOON_DIR.z).normalize();
 
     const material = new THREE.ShaderMaterial({
@@ -299,13 +316,15 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uMoonColor: { value: new THREE.Color("#f7e7c2") },
           uDeepColor: { value: new THREE.Color("#071423") },
           uShallowColor: { value: new THREE.Color("#10404a") },
-          uShallowWarm: { value: new THREE.Color("#12332f") },
           uFoamColor: { value: new THREE.Color("#aebdb6") },
           uDetail: { value: 1 },
           uSheen: { value: 0 },
           uMoonAz: { value: moonAz },
-          uIslands: { value: islandVec },
-          uIslandGlow: { value: islandGlow },
+          uPools: { value: poolVec },
+          uPoolColor: { value: poolCol },
+          uBuoys: { value: buoyVec },
+          uBuoyColor: { value: buoyCol },
+          uBuoyCount: { value: 0 },
           uRipples: { value: ripples },
         },
       ]),
@@ -350,6 +369,23 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     // Übersichts-Sheen aus der Kamerahöhe ableiten
     const sheenT = THREE.MathUtils.clamp((camera.position.y - 9) / 30, 0, 1);
     mat.uniforms.uSheen.value += (sheenT - mat.uniforms.uSheen.value) * 0.04;
+
+    // Lichtfeld aus der Brücke in die Uniforms kopieren
+    const pv = mat.uniforms.uPools.value as THREE.Vector4[];
+    const pc = mat.uniforms.uPoolColor.value as THREE.Color[];
+    for (let i = 0; i < 10; i++) {
+      const L = _pools[i];
+      if (L) { pv[i].set(L.x, L.z, L.r, L.i); pc[i].copy(L.c); }
+    }
+    const bv = mat.uniforms.uBuoys.value as THREE.Vector4[];
+    const bc = mat.uniforms.uBuoyColor.value as THREE.Color[];
+    const n = Math.min(_buoys.length, MAX_BUOYS);
+    for (let i = 0; i < n; i++) {
+      const L = _buoys[i];
+      bv[i].set(L.x, L.z, L.r, L.i);
+      bc[i].copy(L.c);
+    }
+    mat.uniforms.uBuoyCount.value = n;
 
     // Reflexions-Pass: Szene aus gespiegelter Kamera ins RT.
     // Tone Mapping für den Pass AUS — das RT hält lineare Werte,

@@ -5,14 +5,15 @@
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Line } from "@react-three/drei";
 import {
-  useOcean, selectPhenomenon, type Phenomenon, type Arm,
+  useOcean, selectPhenomenon, type Phenomenon,
 } from "../ocean/world";
 import { w2x, w2z } from "./coords";
 import { waveHeight, waveNormal } from "./waves";
-import { projStore } from "./projStore";
-import { getHaloTexture } from "./Islands3D";
+import { projStore, splat3D } from "./projStore";
+import { getHaloTexture } from "./textures";
+import { Arms3D } from "./Arms3D";
+import { setWaterBuoys, type FieldLight } from "./OceanWater";
 
 const _v = new THREE.Vector3();
 const _up = new THREE.Vector3(0, 1, 0);
@@ -48,6 +49,9 @@ function Buoy({ p, selected }: { p: Phenomenon; selected: boolean }) {
       const m = haloRef.current.material as THREE.SpriteMaterial;
       m.opacity = (selected ? 0.85 : 0.5) * pulse;
     }
+    // Kielspur: schnell driftende Boje bricht das Wasser auf
+    const speed = Math.hypot(p.vx, p.vy);
+    if (speed > 70 && Math.random() < 0.06) splat3D(p.x, p.y, Math.min(0.5, speed / 500));
   });
 
   const click = (e: ThreeEvent<MouseEvent>) => {
@@ -94,70 +98,6 @@ function Buoy({ p, selected }: { p: Phenomenon; selected: boolean }) {
   );
 }
 
-// ── Ein Arm (additiver Lichtbogen) ───────────────────────────────────────────
-
-const ARC_POINTS = 22;
-
-function ArmArc({ arm, a, b }: { arm: Arm; a: Phenomenon; b: Phenomenon }) {
-  const lineRef = useRef<any>(null);
-  const color = arm.latched ? "#e8c9a0" : "#9fd8cf";
-  const pts = useMemo(() => new Float32Array(ARC_POINTS * 3), []);
-
-  useFrame(({ clock }) => {
-    const line = lineRef.current;
-    if (!line) return;
-    const t = clock.elapsedTime;
-    const calm = projStore.calm;
-    const ax = w2x(a.x);
-    const az = w2z(a.y);
-    const bx2 = w2x(b.x);
-    const bz2 = w2z(b.y);
-    const ya = waveHeight(ax, az, t, calm) * 0.9 + 0.14;
-    const yb = waveHeight(bx2, bz2, t, calm) * 0.9 + 0.14;
-    // Bogen: Mitte leicht angehoben, pendelt quer wie in der 2D-Fassung
-    const mx = (ax + bx2) / 2;
-    const mz = (az + bz2) / 2;
-    const dx = bx2 - ax;
-    const dz = bz2 - az;
-    const len = Math.hypot(dx, dz) || 1;
-    const sway = Math.sin(t * 0.7 + a.bornAt / 1000) * len * 0.09;
-    const my = Math.max(ya, yb) + 0.18 + len * 0.06;
-    const cx = mx - (dz / len) * sway;
-    const cz = mz + (dx / len) * sway;
-    const curve = new THREE.QuadraticBezierCurve3(
-      new THREE.Vector3(ax, ya, az),
-      new THREE.Vector3(cx, my, cz),
-      new THREE.Vector3(bx2, yb, bz2),
-    );
-    const arr = curve.getPoints(ARC_POINTS - 1);
-    for (let i = 0; i < ARC_POINTS; i++) {
-      pts[i * 3] = arr[i].x;
-      pts[i * 3 + 1] = arr[i].y;
-      pts[i * 3 + 2] = arr[i].z;
-    }
-    line.geometry.setPositions(pts);
-    if (line.computeLineDistances) line.computeLineDistances();
-    const m = line.material as { opacity: number };
-    m.opacity = arm.growth * (arm.latched ? 0.7 : 0.5);
-  });
-
-  return (
-    <Line
-      ref={lineRef}
-      points={[[0, -10, 0], [0, -10, 0]]}
-      color={color}
-      lineWidth={arm.latched ? 3 : 2}
-      transparent
-      opacity={0}
-      blending={THREE.AdditiveBlending}
-      depthWrite={false}
-      dashed={!arm.latched}
-      dashSize={0.28}
-      gapSize={0.22}
-    />
-  );
-}
-
 // ── Projektions-Brücke: Bojen-Positionen → projStore (DOM-Karte/Labels) ─────
 
 function PhenProjBridge({ phenomena }: { phenomena: Phenomenon[] }) {
@@ -191,21 +131,42 @@ function PhenProjBridge({ phenomena }: { phenomena: Phenomenon[] }) {
 
 // ── Wurzel ───────────────────────────────────────────────────────────────────
 
+const _buoyCache: FieldLight[] = [];
+
 export function Phenomena3D() {
   const { phenomena, arms, selected } = useOcean();
   const phenById = useMemo(() => new Map(phenomena.map((p) => [p.id, p])), [phenomena]);
+
+  // Bojen-Lichtpools fürs Wasser (pulsierend, in Phänomenfarbe)
+  useFrame(({ clock, camera }) => {
+    const t = clock.elapsedTime;
+    _buoyCache.length = 0;
+    // bei mehr als 14: die kameranächsten wählen
+    const sorted = phenomena.length > 14
+      ? [...phenomena].sort((pa, pb) =>
+          Math.hypot(w2x(pa.x) - camera.position.x, w2z(pa.y) - camera.position.z) -
+          Math.hypot(w2x(pb.x) - camera.position.x, w2z(pb.y) - camera.position.z),
+        )
+      : phenomena;
+    for (const p of sorted.slice(0, 14)) {
+      const pulse = 0.75 + 0.25 * Math.sin(t * 1.6 + p.bornAt / 900);
+      _buoyCache.push({
+        x: w2x(p.x),
+        z: w2z(p.y),
+        r: 1.9,
+        i: 0.7 * pulse,
+        c: new THREE.Color(p.color),
+      });
+    }
+    setWaterBuoys(_buoyCache);
+  });
 
   return (
     <>
       {phenomena.map((p) => (
         <Buoy key={p.id} p={p} selected={selected === p.id} />
       ))}
-      {arms.map((arm) => {
-        const a = phenById.get(arm.a);
-        const b = phenById.get(arm.b);
-        if (!a || !b || arm.growth <= 0.02) return null;
-        return <ArmArc key={`${arm.a}-${arm.b}`} arm={arm} a={a} b={b} />;
-      })}
+      <Arms3D arms={arms} phenById={phenById} />
       <PhenProjBridge phenomena={phenomena} />
     </>
   );
