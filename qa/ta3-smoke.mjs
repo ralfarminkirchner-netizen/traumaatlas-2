@@ -7,7 +7,7 @@
 import { chromium } from "playwright";
 import { mkdirSync } from "node:fs";
 
-const BASE = "http://localhost:7319/";
+const BASE = "http://localhost:8471/";
 const SHOTS = "/tmp/ta3-qa";
 mkdirSync(SHOTS, { recursive: true });
 

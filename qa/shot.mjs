@@ -7,7 +7,7 @@ import { chromium } from "playwright";
 import { mkdirSync, createWriteStream } from "node:fs";
 
 const scenarios = (process.argv[2] || "idle").split(",");
-const PORT = 7319;
+const PORT = 8471;
 const BASE = `http://localhost:${PORT}/`;
 const SHOTS = "/tmp/ta3-shots";
 mkdirSync(SHOTS, { recursive: true });
@@ -28,7 +28,7 @@ process.on("SIGINT", () => { kill(); process.exit(130); });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function waitForServer(timeoutMs = 120000) {
+async function waitForServer(timeoutMs = 300000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     try { const r = await fetch(BASE); if (r.ok) return; } catch { /* noch nicht da */ }
@@ -106,6 +106,19 @@ try {
       await page.mouse.wheel(0, -600);
       await sleep(2000);
       await page.screenshot({ path: `${SHOTS}/island.png` });
+    }
+
+    if (scenario === "tour") {
+      // Nahaufnahme jeder Insel: hinsegeln, Kapitel schließen, Insel füllt das Bild
+      const ids = ["navigator", "kosmos", "kaskade", "polyvagal", "toleranz", "lexikon", "stammbaum", "baukasten", "wechsel", "wegweiser"];
+      for (const id of ids) {
+        await page.selectOption("#ta3-chapter-jump", id);
+        await sleep(5200);
+        await page.getByRole("button", { name: /Zurück ans Meer/ }).click();
+        await sleep(1400);
+        await page.screenshot({ path: `${SHOTS}/tour-${id}.png` });
+        console.log(`  tour ${id} ✓`);
+      }
     }
 
     console.log(`SHOT  ${scenario} ✓`);
