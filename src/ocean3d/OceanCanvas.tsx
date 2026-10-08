@@ -30,11 +30,13 @@ function LabelsBridge() {
       const sx = (_v.x * 0.5 + 0.5) * size.width;
       const sy = (-_v.y * 0.5 + 0.5) * size.height;
       const dist = camera.position.distanceTo(new THREE.Vector3(w2x(isl.x), 0, w2z(isl.y)));
+      const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov);
       projStore.labels.set(isl.id, {
         sx,
         sy,
         visible: !behind && sx > -200 && sx < size.width + 200 && sy > -120 && sy < size.height + 200,
         scale: THREE.MathUtils.clamp(26 / Math.max(dist, 8), 0.55, 1.25),
+        pxScale: size.height / (2 * Math.max(dist, 0.5) * Math.tan(fovRad / 2)),
       });
     }
   });

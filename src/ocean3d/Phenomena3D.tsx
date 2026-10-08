@@ -174,11 +174,14 @@ function PhenProjBridge({ phenomena }: { phenomena: Phenomenon[] }) {
       const behind = _v.z > 1;
       const sx = (_v.x * 0.5 + 0.5) * size.width;
       const sy = (-_v.y * 0.5 + 0.5) * size.height;
+      const dist = camera.position.distanceTo(_v.set(bx, 0, bz));
+      const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov);
       seen.add(p.id);
       projStore.phen.set(p.id, {
         sx,
         sy,
         visible: !behind && sx > -80 && sx < size.width + 80 && sy > -60 && sy < size.height + 80,
+        pxScale: size.height / (2 * Math.max(dist, 0.5) * Math.tan(fovRad / 2)),
       });
     }
     // entfernte Phänomene aufräumen

@@ -6,13 +6,14 @@ export interface LabelProj {
   sy: number;
   visible: boolean;
   scale: number; // Nähe-Skalierung für Schriftgröße
+  pxScale: number; // Bildschirm-px pro Welteinheit (für Fog-of-War-Löcher)
 }
 
 export const projStore = {
   /** Insel-Id → projizierte Position */
   labels: new Map<string, LabelProj>(),
   /** Phänomen-Id → projizierte Position */
-  phen: new Map<string, { sx: number; sy: number; visible: boolean }>(),
+  phen: new Map<string, { sx: number; sy: number; visible: boolean; pxScale: number }>(),
   /** stille Mechanik: 0 = normal, 1 = ganz still */
   calm: 0,
 };

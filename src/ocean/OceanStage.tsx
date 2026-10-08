@@ -15,6 +15,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { webgl2Available } from "@/hooks/use-webgl";
 import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
+import { FogOfWar3D } from "../ocean3d/FogOfWar3D";
 import { splat3D, projStore } from "../ocean3d/projStore";
 
 // ── Welt-Schicht-Transform ───────────────────────────────────────────────────
@@ -743,6 +744,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
             <OceanCanvas mobile={isMobile} />
           </div>
           <IslandLabels3D onSail={sail} />
+          <FogOfWar3D />
           <PhenomenaLabels3D />
           <PhenomenonCard mode3d />
         </>
