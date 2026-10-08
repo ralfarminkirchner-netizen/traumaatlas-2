@@ -1,5 +1,6 @@
-// Prozedurale 3D-Inseln: radiale Ridge-Noise-Heightmap, Fels/Sand-Kanten,
-// warmer Votivlicht-Kern mit Halo-Sprite. Geometrie + Vertexfarben werden
+// Prozedurale 3D-Inseln: unverwechselbare Silhouetten pro Kapitel (Shape-Typen
+// aus islandShapes.ts), Fels-Strata, Nassband an der Wasserlinie, warmer
+// Votivlicht-Kern mit gestuftem Halo. Geometrie + Vertexfarben werden
 // einmalig auf der CPU gebaut (pro Insel deterministisch geseedet).
 
 import { useMemo, useRef } from "react";
@@ -8,52 +9,7 @@ import { useFrame } from "@react-three/fiber";
 import { ISLANDS, getOceanState, type IslandDef } from "../ocean/world";
 import { w2x, w2z, S } from "./coords";
 import { MOON_DIR } from "./SkyDome";
-
-// ── Deterministisches Value-Noise (CPU) ──────────────────────────────────────
-
-function makeRng(seed: number) {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
-}
-
-function hash2(ix: number, iz: number, seed: number): number {
-  let h = ix * 374761393 + iz * 668265263 + seed * 2246822519;
-  h = (h ^ (h >>> 13)) >>> 0;
-  h = (h * 1274126177) >>> 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-
-function vnoise(x: number, z: number, seed: number): number {
-  const ix = Math.floor(x);
-  const iz = Math.floor(z);
-  const fx = x - ix;
-  const fz = z - iz;
-  const sx = fx * fx * (3 - 2 * fx);
-  const sz = fz * fz * (3 - 2 * fz);
-  const a = hash2(ix, iz, seed);
-  const b = hash2(ix + 1, iz, seed);
-  const c = hash2(ix, iz + 1, seed);
-  const d = hash2(ix + 1, iz + 1, seed);
-  return a + (b - a) * sx + (c - a) * sz + (a - b - c + d) * sx * sz;
-}
-
-/** Ridge-FBM: scharfe Kämme */
-function ridgeFbm(x: number, z: number, seed: number, octaves = 4): number {
-  let sum = 0;
-  let amp = 0.55;
-  let freq = 1;
-  for (let o = 0; o < octaves; o++) {
-    const n = vnoise(x * freq, z * freq, seed + o * 131);
-    const ridge = Math.pow(1 - Math.abs(2 * n - 1), 2);
-    sum += ridge * amp;
-    amp *= 0.5;
-    freq *= 2.1;
-  }
-  return sum; // ~0..1.1
-}
+import { ISLAND_SPECS, islandHeight, specPeakY, specLightXZ, makeRng, vnoise, type ShapeSpec } from "./islandShapes";
 
 // ── Insel-Geometrie ──────────────────────────────────────────────────────────
 
@@ -61,13 +17,25 @@ interface IslandGeo {
   geometry: THREE.BufferGeometry;
   peakY: number;
   radius: number;
+  lightAnchor: [number, number, number];
+  spec: ShapeSpec;
 }
 
-function buildIsland(isl: IslandDef, seed: number): IslandGeo {
+const sstep = (a: number, b: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+function buildIsland(isl: IslandDef, seed: number, mobile: boolean): IslandGeo {
+  const spec = ISLAND_SPECS[isl.id];
   const radius = isl.r * S; // Welteinheiten
   const R = radius * 1.4; // inkl. Unterwasser-Shelf
-  const segs = 72;
-  const peakH = radius * (0.34 + 0.12 * hash2(seed, 7, seed));
+  const segs = mobile ? 64 : 96;
+  const peakH = radius * spec.hMul;
+  const peakY = specPeakY(spec, radius);
+  // Licht-Anker: XZ aus der Spezifikation, Höhe direkt aus der Heightmap gelesen
+  const [lx, lz] = specLightXZ(spec, radius);
+  const lightAnchor: [number, number, number] = [lx, islandHeight(spec, lx, lz, seed, radius) + radius * 0.06, lz];
 
   const geo = new THREE.PlaneGeometry(R * 2, R * 2, segs, segs);
   geo.rotateX(-Math.PI / 2);
@@ -75,54 +43,56 @@ function buildIsland(isl: IslandDef, seed: number): IslandGeo {
   const pos = geo.attributes.position as THREE.BufferAttribute;
   const colors = new Float32Array(pos.count * 3);
 
-  const c0 = new THREE.Color(isl.ground[0]);
-  const c1 = new THREE.Color(isl.ground[1]);
+  // Albedo für PBR anheben: die 2D-Palette ist für Nacht-PBR zu dunkel,
+  // sonst kollabieren die Schattenseiten zu Schwarz
+  const c0 = new THREE.Color(isl.ground[0]).multiplyScalar(1.85);
+  const c1 = new THREE.Color(isl.ground[1]).multiplyScalar(1.5);
   const c2 = new THREE.Color(isl.ground[2]);
-  const sand = new THREE.Color("#6e5b40");
+  const sand = new THREE.Color("#7a6647");
   const deep = new THREE.Color("#08131a");
+  const wet = new THREE.Color("#060a0c");
   const amber = new THREE.Color("#e2b35c");
+  const rimCol = new THREE.Color("#4a5a76");
   const moonAz = new THREE.Vector2(MOON_DIR.x, MOON_DIR.z).normalize();
+
+  // sandige Formen bekommen ein breiteres Strandband
+  const sandMul = spec.shape === "atoll" ? 0.95 : spec.shape === "dune" ? 0.85 : 0.35;
 
   const col = new THREE.Color();
 
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
-    const r = Math.hypot(x, z) / R; // 0..1 (1 = Rand des Patches)
-    const ang = Math.atan2(z, x);
-
-    // radiale Unregelmäßigkeit der Küstenlinie
-    const coast = 0.78 + 0.2 * vnoise(Math.cos(ang) * 2.2 + 5, Math.sin(ang) * 2.2 + 5, seed);
-    const rc = r / coast;
-
-    // Höhenprofil: Kernplateau → Abfall → Shelf unter Wasser
-    let h: number;
-    if (rc < 1) {
-      const ridge = ridgeFbm(x * 0.55 + 11, z * 0.55 + 11, seed);
-      const profile = Math.pow(Math.max(0, 1 - rc), 0.62);
-      h = profile * (0.42 + 0.58 * Math.min(1, ridge)) * peakH + 0.12 * (1 - rc);
-    } else {
-      // Shelf: sanft unter die Wasserlinie tauchen
-      h = -0.18 - (rc - 1) * 2.2;
-    }
+    const h = islandHeight(spec, x, z, seed, radius);
     pos.setY(i, h);
 
     // ── Vertexfarbe ──
-    const t = THREE.MathUtils.clamp(h / peakH, 0, 1);
+    const t = THREE.MathUtils.clamp(h / Math.max(peakH, 1e-3), 0, 1);
     if (h < 0) {
       col.copy(deep).lerp(c0, Math.max(0, 1 + h * 1.6));
     } else {
       col.copy(c0).lerp(c1, Math.pow(t, 1.3));
       // warme, helle Kuppen
       col.lerp(c2, THREE.MathUtils.smoothstep(t, 0.55, 0.95) * 0.65);
-      // Sandkante nahe der Wasserlinie
-      const band = THREE.MathUtils.smoothstep(h, 0.02, 0.1) * (1 - THREE.MathUtils.smoothstep(h, 0.22, 0.55));
-      col.lerp(sand, band * 0.55);
-      // Votiv-Wärme zum Zentrum
-      col.lerp(amber, (1 - THREE.MathUtils.smoothstep(r, 0, 0.42)) * 0.5);
+      // Sandkante nahe der Wasserlinie (schmal, nur echte Strandzone)
+      const band = THREE.MathUtils.smoothstep(h, 0.02, 0.08) * (1 - THREE.MathUtils.smoothstep(h, 0.16, 0.34));
+      col.lerp(sand, band * 0.6 * sandMul);
+      // Fels-Strata: höhengestreifte Bänder, pro Insel variiert
+      if (spec.strata > 0 && t > 0.08) {
+        const grain = vnoise(x * 1.7 + 13, z * 1.7 + 13, seed + 77);
+        const bands = Math.sin(h * 2.7 + grain * 2.4 + seed * 0.13);
+        col.multiplyScalar(1 + bands * 0.085 * spec.strata);
+        col.lerp(c0, Math.max(0, -bands) * 0.16 * spec.strata);
+      }
+      // Votiv-Wärme um den Licht-Anker (eng gefasst)
+      const dl = Math.hypot(x - lightAnchor[0], z - lightAnchor[2]) / radius;
+      col.lerp(amber, (1 - sstep(0, 0.40, dl)) * 0.38);
+      // Nassband an der Wasserlinie (zugleich Kontakt-AO)
+      const wetBand = 1 - sstep(0.06, 0.34, h);
+      col.lerp(wet, wetBand * 0.52);
       // Mondseitiger Rim (statisch gebacken)
       const rim = Math.max(0, (x / R) * moonAz.x + (z / R) * moonAz.y);
-      col.lerp(new THREE.Color("#42506a"), rim * 0.16 * t);
+      col.lerp(rimCol, rim * 0.22 * t);
     }
     colors[i * 3] = col.r;
     colors[i * 3 + 1] = col.g;
@@ -131,7 +101,7 @@ function buildIsland(isl: IslandDef, seed: number): IslandGeo {
 
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  return { geometry: geo, peakY: peakH + 0.12, radius };
+  return { geometry: geo, peakY, radius, lightAnchor, spec };
 }
 
 // ── Halo-Textur (einmalig geteilt) ───────────────────────────────────────────
@@ -156,16 +126,23 @@ function getHaloTexture(): THREE.CanvasTexture {
 // ── Eine Insel ───────────────────────────────────────────────────────────────
 
 /** Höhe der Kuppe — auch für Label-Anker/Lichtpositionen gebraucht. */
-export function islandPeakY(isl: IslandDef, seed: number): number {
-  return isl.r * S * (0.34 + 0.12 * hash2(seed, 7, seed)) + 0.12;
+export function islandPeakY(isl: IslandDef): number {
+  return specPeakY(ISLAND_SPECS[isl.id], isl.r * S);
 }
 
-function Island3D({ isl, seed }: { isl: IslandDef; seed: number }) {
-  const { geometry, peakY, radius } = useMemo(() => buildIsland(isl, seed), [isl, seed]);
+function Island3D({ isl, seed, mobile }: { isl: IslandDef; seed: number; mobile: boolean }) {
+  const { geometry, peakY, radius, lightAnchor } = useMemo(() => buildIsland(isl, seed, mobile), [isl, seed, mobile]);
   const haloRef = useRef<THREE.Sprite>(null);
+  const poolRef = useRef<THREE.Sprite>(null);
   const coreRef = useRef<THREE.Mesh>(null);
   const lightRef = useRef<THREE.PointLight>(null);
   const phase = useMemo(() => makeRng(seed)() * Math.PI * 2, [seed]);
+
+  // Lichtfarbe aus der Boden-Signatur der Insel (mit Wärme verschnitten, kein Kitsch)
+  const lightColor = useMemo(
+    () => new THREE.Color(isl.ground[2]).lerp(new THREE.Color("#ffd9a0"), 0.42),
+    [isl],
+  );
 
   useFrame(({ clock }) => {
     const t = clock.elapsedTime;
@@ -175,54 +152,70 @@ function Island3D({ isl, seed }: { isl: IslandDef; seed: number }) {
       const m = haloRef.current.material as THREE.SpriteMaterial;
       m.opacity = breathe * (visited ? 1 : 0.62);
     }
+    if (poolRef.current) {
+      const m = poolRef.current.material as THREE.SpriteMaterial;
+      m.opacity = breathe * 0.26 * (visited ? 1 : 0.7);
+    }
     if (coreRef.current) {
       const m = coreRef.current.material as THREE.MeshBasicMaterial;
       m.color.set("#ffdca6");
       m.color.multiplyScalar(0.85 + 0.25 * Math.sin(t * 0.9 + phase));
     }
     if (lightRef.current) {
-      lightRef.current.intensity = radius * 2.4 * (0.8 + 0.2 * Math.sin(t * 0.9 + phase)) * (visited ? 1.15 : 0.85);
+      lightRef.current.intensity = radius * 1.7 * (0.8 + 0.2 * Math.sin(t * 0.9 + phase)) * (visited ? 1.15 : 0.85);
     }
   });
 
   return (
     <group position={[w2x(isl.x), 0, w2z(isl.y)]}>
-      <mesh geometry={geometry}>
+      <mesh geometry={geometry} castShadow receiveShadow>
         <meshStandardMaterial vertexColors roughness={0.94} metalness={0.02} />
       </mesh>
-      {/* warmes Votivlicht: echtes Punktlicht auf Fels + Wasser */}
+      {/* warmes Votivlicht in Inselfarbe: echtes Punktlicht auf Fels + Wasser */}
       <pointLight
         ref={lightRef}
-        position={[0, peakY * 0.72, 0]}
-        color="#f0be78"
-        intensity={radius * 2.2}
-        distance={radius * 5.5}
+        position={[lightAnchor[0], lightAnchor[1] + peakY * 0.1, lightAnchor[2]]}
+        color={lightColor}
+        intensity={radius * 1.7}
+        distance={radius * 4.6}
         decay={2}
       />
-      {/* Votivlicht-Kern, leicht in die Kuppe eingebettet */}
-      <mesh ref={coreRef} position={[0, peakY * 0.6, 0]}>
-        <sphereGeometry args={[radius * 0.09, 16, 16]} />
+      {/* Votivlicht-Kern: klein, halb im Gestein versenkt */}
+      <mesh ref={coreRef} position={[lightAnchor[0], lightAnchor[1] - radius * 0.02, lightAnchor[2]]}>
+        <sphereGeometry args={[radius * 0.045, 16, 16]} />
         <meshBasicMaterial color="#ffdca6" toneMapped={false} />
       </mesh>
       {/* additiver Halo (erscheint auch in der Wasser-Reflexion) */}
-      <sprite ref={haloRef} position={[0, peakY * 0.78, 0]} scale={[radius * 2.3, radius * 2.3, 1]}>
+      <sprite ref={haloRef} position={[lightAnchor[0], lightAnchor[1] + peakY * 0.14, lightAnchor[2]]} scale={[radius * 2.2, radius * 2.2, 1]}>
         <spriteMaterial
           map={getHaloTexture()}
+          color={lightColor}
           blending={THREE.AdditiveBlending}
           depthWrite={false}
           transparent
           opacity={0.7}
         />
       </sprite>
+      {/* großer, weicher Lichtpool als zweite, schwächere Stufe */}
+      <sprite ref={poolRef} position={[lightAnchor[0], lightAnchor[1] * 0.55, lightAnchor[2]]} scale={[radius * 4.6, radius * 3.4, 1]}>
+        <spriteMaterial
+          map={getHaloTexture()}
+          color={lightColor}
+          blending={THREE.AdditiveBlending}
+          depthWrite={false}
+          transparent
+          opacity={0.2}
+        />
+      </sprite>
     </group>
   );
 }
 
-export function Islands3D() {
+export function Islands3D({ mobile = false }: { mobile?: boolean }) {
   return (
     <>
       {ISLANDS.map((isl, i) => (
-        <Island3D key={isl.id} isl={isl} seed={101 + i * 17} />
+        <Island3D key={isl.id} isl={isl} seed={101 + i * 17} mobile={mobile} />
       ))}
     </>
   );

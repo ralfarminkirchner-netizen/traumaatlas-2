@@ -20,7 +20,7 @@ function LabelsBridge() {
   useFrame(() => {
     for (let i = 0; i < ISLANDS.length; i++) {
       const isl = ISLANDS[i];
-      const peakY = islandPeakY(isl, 101 + i * 17);
+      const peakY = islandPeakY(isl);
       _v.set(w2x(isl.x), peakY + 1.5, w2z(isl.y));
       _v.project(camera);
       const behind = _v.z > 1;
@@ -48,14 +48,18 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       style={{ position: "absolute", inset: 0 }}
     >
       <fogExp2 attach="fog" args={["#071120", 0.0095]} />
-      <ambientLight intensity={0.3} color="#2a3a55" />
-      <hemisphereLight args={["#1a2a44", "#05070c", 0.35]} />
-      <directionalLight position={[-38, 40, -83]} intensity={0.55} color="#cfd8e8" />
+      {/* Nacht-Grundstimmung: kühles Ambient + Hemisphären-Bounce vom Wasser */}
+      <ambientLight intensity={0.44} color="#364763" />
+      <hemisphereLight args={["#33476b", "#0c1018", 0.85]} />
+      {/* Mondlicht: aus NW, moderate Elevation — formt die Inseln lesbar */}
+      <directionalLight position={[-30, 26, -57]} intensity={1.15} color="#d8e2f0" />
+      {/* schwaches Gegenlicht aus SO, damit Schattenseiten nicht kollabieren */}
+      <directionalLight position={[42, 16, 55]} intensity={0.5} color="#50628a" />
       <CameraRig />
       <LabelsBridge />
       <SkyDome />
       <OceanWater mobile={mobile} />
-      <Islands3D />
+      <Islands3D mobile={mobile} />
     </Canvas>
   );
 }
