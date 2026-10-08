@@ -6,6 +6,7 @@
 import { useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { ISLANDS, getOceanState, type IslandDef } from "../ocean/world";
 import { w2x, w2z, S } from "./coords";
 import { MOON_DIR } from "./SkyDome";
@@ -15,6 +16,8 @@ import { ISLAND_SPECS, islandHeight, specPeakY, specLightXZ, makeRng, vnoise, ty
 
 interface IslandGeo {
   geometry: THREE.BufferGeometry;
+  stoneGeo: THREE.BufferGeometry | null;
+  glowGeo: THREE.BufferGeometry | null;
   peakY: number;
   radius: number;
   lightAnchor: [number, number, number];
@@ -25,6 +28,107 @@ const sstep = (a: number, b: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 };
+
+// ── Mikrodetails: Steinlaternen am Ufer, Votiv-Cluster am Licht-Anker ───────
+// Würdevoll klein, aus derselben Heightmap platziert. Zwei gemergte Meshes
+// pro Insel (Stein + Glühen) — keine Draw-Call-Flut.
+
+function buildDetails(
+  spec: ShapeSpec,
+  seed: number,
+  radius: number,
+  lightAnchor: [number, number, number],
+  withJetty: boolean,
+): { stoneGeo: THREE.BufferGeometry | null; glowGeo: THREE.BufferGeometry | null } {
+  const rng = makeRng(seed * 7 + 3);
+  const stone: THREE.BufferGeometry[] = [];
+  const glow: THREE.BufferGeometry[] = [];
+  const k = radius / 5; // Laternen skalieren leicht mit der Insel
+
+  // Ufer-Spots: radial nach außen tasten, bis der Hang 0.14..0.4 über Wasser ist
+  const lanternCount = spec.shape === "atoll" || spec.shape === "spire" ? 1 : 2 + (rng() > 0.5 ? 1 : 0);
+  const spots: { x: number; z: number; y: number; ang: number }[] = [];
+  for (let tries = 0; tries < 40 && spots.length < lanternCount; tries++) {
+    const ang = rng() * Math.PI * 2;
+    for (let rr = 0.55; rr < 1.3; rr += 0.05) {
+      const x = Math.cos(ang) * rr * radius * 1.4;
+      const z = Math.sin(ang) * rr * radius * 1.4;
+      const h = islandHeight(spec, x, z, seed, radius);
+      if (h > 0.14 && h < 0.42) {
+        if (spots.every((s) => Math.hypot(s.x - x, s.z - z) > radius * 0.8)) {
+          spots.push({ x, z, y: h, ang });
+        }
+        break;
+      }
+    }
+  }
+
+  const m = new THREE.Matrix4();
+  const place = (g: THREE.BufferGeometry, x: number, y: number, z: number, rotY: number, s = 1) => {
+    const gg = g.clone();
+    m.makeRotationY(rotY).scale(new THREE.Vector3(s, s, s)).setPosition(x, y, z);
+    gg.applyMatrix4(m);
+    return gg;
+  };
+
+  const base = new THREE.CylinderGeometry(0.045, 0.062, 0.14, 6).translate(0, 0.07, 0);
+  const housing = new THREE.BoxGeometry(0.11, 0.09, 0.11).translate(0, 0.2, 0);
+  const roof = new THREE.ConeGeometry(0.1, 0.075, 4).translate(0, 0.285, 0);
+  const bead = new THREE.SphereGeometry(0.032, 8, 8).translate(0, 0.2, 0);
+
+  for (const s of spots) {
+    const rotY = s.ang + Math.PI / 2 + (rng() - 0.5) * 0.6;
+    const sc = k * (0.85 + rng() * 0.4);
+    stone.push(place(base, s.x, s.y - 0.02, s.z, rotY, sc));
+    stone.push(place(housing, s.x, s.y - 0.02, s.z, rotY, sc));
+    stone.push(place(roof, s.x, s.y - 0.02, s.z, rotY, sc));
+    glow.push(place(bead, s.x, s.y - 0.02, s.z, rotY, sc));
+  }
+
+  // Votiv-Cluster: 3–5 kleine Glutperlen um den Licht-Anker
+  const votives = 3 + Math.floor(rng() * 3);
+  for (let i = 0; i < votives; i++) {
+    const a = rng() * Math.PI * 2;
+    const d = rng() * radius * 0.14;
+    const x = lightAnchor[0] + Math.cos(a) * d;
+    const z = lightAnchor[2] + Math.sin(a) * d;
+    const y = islandHeight(spec, x, z, seed, radius);
+    if (y < 0.02) continue;
+    const r = 0.018 + rng() * 0.02;
+    glow.push(new THREE.SphereGeometry(r * k * 1.6, 8, 8).translate(x, y + r, z));
+  }
+
+  // kleiner Steg am Navigator (Heimatinsel): Bohlen ins Wasser
+  if (withJetty) {
+    const ang = spec.rot + Math.PI / 2;
+    let sx = 0;
+    let sz = 0;
+    for (let rr = 0.5; rr < 1.35; rr += 0.04) {
+      const x = Math.cos(ang) * rr * radius * 1.4;
+      const z = Math.sin(ang) * rr * radius * 1.4;
+      const h = islandHeight(spec, x, z, seed, radius);
+      if (h < 0.1) { sx = x; sz = z; break; }
+    }
+    if (sx !== 0 || sz !== 0) {
+      const dirX = Math.cos(ang);
+      const dirZ = Math.sin(ang);
+      const plank = new THREE.BoxGeometry(0.42, 0.035, 0.15);
+      for (let i = -1; i < 5; i++) {
+        const px = sx + dirX * (0.14 + i * 0.24) * k * 2.2;
+        const pz = sz + dirZ * (0.14 + i * 0.24) * k * 2.2;
+        stone.push(place(plank, px, 0.09, pz, ang + Math.PI / 2 + (rng() - 0.5) * 0.08, k));
+      }
+      const post = new THREE.CylinderGeometry(0.03, 0.035, 0.3, 6).translate(0, 0.02, 0);
+      stone.push(place(post, sx + dirX * 1.3 * k * 2.2, 0.05, sz + dirZ * 1.3 * k * 2.2, 0, k));
+      stone.push(place(post, sx - dirZ * 0.2 * k + dirX * 1.15 * k * 2.2, 0.05, sz + dirX * 0.2 * k + dirZ * 1.15 * k * 2.2, 0, k));
+    }
+  }
+
+  return {
+    stoneGeo: stone.length ? mergeGeometries(stone, false) : null,
+    glowGeo: glow.length ? mergeGeometries(glow, false) : null,
+  };
+}
 
 function buildIsland(isl: IslandDef, seed: number, mobile: boolean): IslandGeo {
   const spec = ISLAND_SPECS[isl.id];
@@ -86,7 +190,7 @@ function buildIsland(isl: IslandDef, seed: number, mobile: boolean): IslandGeo {
       }
       // Votiv-Wärme um den Licht-Anker (eng gefasst)
       const dl = Math.hypot(x - lightAnchor[0], z - lightAnchor[2]) / radius;
-      col.lerp(amber, (1 - sstep(0, 0.40, dl)) * 0.38);
+      col.lerp(amber, (1 - sstep(0, 0.34, dl)) * 0.34);
       // Nassband an der Wasserlinie (zugleich Kontakt-AO)
       const wetBand = 1 - sstep(0.06, 0.34, h);
       col.lerp(wet, wetBand * 0.52);
@@ -101,7 +205,13 @@ function buildIsland(isl: IslandDef, seed: number, mobile: boolean): IslandGeo {
 
   geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  return { geometry: geo, peakY, radius, lightAnchor, spec };
+
+  // Mikrodetails: Laternen, Votiv-Cluster, Steg (nur Heimatinsel)
+  const { stoneGeo, glowGeo } = mobile
+    ? { stoneGeo: null, glowGeo: null }
+    : buildDetails(spec, seed, radius, lightAnchor, isl.id === "navigator");
+
+  return { geometry: geo, stoneGeo, glowGeo, peakY, radius, lightAnchor, spec };
 }
 
 // ── Halo-Textur (einmalig geteilt) ───────────────────────────────────────────
@@ -131,7 +241,7 @@ export function islandPeakY(isl: IslandDef): number {
 }
 
 function Island3D({ isl, seed, mobile }: { isl: IslandDef; seed: number; mobile: boolean }) {
-  const { geometry, peakY, radius, lightAnchor } = useMemo(() => buildIsland(isl, seed, mobile), [isl, seed, mobile]);
+  const { geometry, stoneGeo, glowGeo, peakY, radius, lightAnchor } = useMemo(() => buildIsland(isl, seed, mobile), [isl, seed, mobile]);
   const haloRef = useRef<THREE.Sprite>(null);
   const poolRef = useRef<THREE.Sprite>(null);
   const coreRef = useRef<THREE.Mesh>(null);
@@ -162,7 +272,7 @@ function Island3D({ isl, seed, mobile }: { isl: IslandDef; seed: number; mobile:
       m.color.multiplyScalar(0.85 + 0.25 * Math.sin(t * 0.9 + phase));
     }
     if (lightRef.current) {
-      lightRef.current.intensity = radius * 1.7 * (0.8 + 0.2 * Math.sin(t * 0.9 + phase)) * (visited ? 1.15 : 0.85);
+      lightRef.current.intensity = radius * 1.55 * (0.8 + 0.2 * Math.sin(t * 0.9 + phase)) * (visited ? 1.15 : 0.85);
     }
   });
 
@@ -171,13 +281,24 @@ function Island3D({ isl, seed, mobile }: { isl: IslandDef; seed: number; mobile:
       <mesh geometry={geometry} castShadow receiveShadow>
         <meshStandardMaterial vertexColors roughness={0.94} metalness={0.02} />
       </mesh>
+      {/* Mikrodetails: Steinlaternen/Steg (gemergt) + Glutperlen */}
+      {stoneGeo && (
+        <mesh geometry={stoneGeo} castShadow>
+          <meshStandardMaterial color={new THREE.Color(isl.ground[1]).multiplyScalar(0.8)} roughness={0.95} />
+        </mesh>
+      )}
+      {glowGeo && (
+        <mesh geometry={glowGeo}>
+          <meshBasicMaterial color="#ffd9a0" toneMapped={false} />
+        </mesh>
+      )}
       {/* warmes Votivlicht in Inselfarbe: echtes Punktlicht auf Fels + Wasser */}
       <pointLight
         ref={lightRef}
         position={[lightAnchor[0], lightAnchor[1] + peakY * 0.1, lightAnchor[2]]}
         color={lightColor}
-        intensity={radius * 1.7}
-        distance={radius * 4.6}
+        intensity={radius * 1.55}
+        distance={radius * 3.4}
         decay={2}
       />
       {/* Votivlicht-Kern: klein, halb im Gestein versenkt */}

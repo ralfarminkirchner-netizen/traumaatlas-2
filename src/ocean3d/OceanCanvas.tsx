@@ -10,6 +10,7 @@ import { CameraRig } from "./CameraRig";
 import { OceanWater } from "./OceanWater";
 import { SkyDome } from "./SkyDome";
 import { Islands3D, islandPeakY } from "./Islands3D";
+import { DriftParticles } from "./DriftParticles";
 
 const _v = new THREE.Vector3();
 
@@ -42,6 +43,7 @@ function LabelsBridge() {
 export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
   return (
     <Canvas
+      shadows={!mobile}
       dpr={mobile ? [1, 1.5] : [1, 1.75]}
       camera={{ fov: 50, near: 0.1, far: 1100, position: [0, 8, 14] }}
       gl={{ antialias: true, powerPreference: "high-performance" }}
@@ -49,17 +51,33 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
     >
       <fogExp2 attach="fog" args={["#071120", 0.0095]} />
       {/* Nacht-Grundstimmung: kühles Ambient + Hemisphären-Bounce vom Wasser */}
-      <ambientLight intensity={0.44} color="#364763" />
-      <hemisphereLight args={["#33476b", "#0c1018", 0.85]} />
-      {/* Mondlicht: aus NW, moderate Elevation — formt die Inseln lesbar */}
-      <directionalLight position={[-30, 26, -57]} intensity={1.15} color="#d8e2f0" />
+      <ambientLight intensity={0.5} color="#364763" />
+      <hemisphereLight args={["#33476b", "#0c1018", 1.0]} />
+      {/* Mondlicht: aus NW, moderate Elevation — formt die Inseln lesbar,
+          wirft echte Schatten (Selbstbeschattung der Felsen) */}
+      <directionalLight
+        position={[-30, 26, -57]}
+        intensity={1.25}
+        color="#d8e2f0"
+        castShadow={!mobile}
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-80}
+        shadow-camera-right={80}
+        shadow-camera-top={60}
+        shadow-camera-bottom={-60}
+        shadow-camera-near={1}
+        shadow-camera-far={220}
+        shadow-bias={-0.0004}
+        shadow-normalBias={0.9}
+      />
       {/* schwaches Gegenlicht aus SO, damit Schattenseiten nicht kollabieren */}
-      <directionalLight position={[42, 16, 55]} intensity={0.5} color="#50628a" />
+      <directionalLight position={[42, 16, 55]} intensity={0.62} color="#50628a" />
       <CameraRig />
       <LabelsBridge />
       <SkyDome />
       <OceanWater mobile={mobile} />
       <Islands3D mobile={mobile} />
+      <DriftParticles mobile={mobile} />
     </Canvas>
   );
 }
