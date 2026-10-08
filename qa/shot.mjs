@@ -13,10 +13,12 @@ const SHOTS = "/tmp/ta3-shots";
 mkdirSync(SHOTS, { recursive: true });
 
 const log = createWriteStream("/tmp/ta3-dev.log", { flags: "a" });
-const server = spawn("npm", ["run", "dev", "--", "--port", String(PORT), "--strictPort"], {
-  cwd: new URL("..", import.meta.url).pathname,
-  stdio: ["ignore", "pipe", "pipe"],
-});
+// vite direkt (ohne npm-Wrapper), damit SIGTERM den Server wirklich beendet
+const server = spawn(
+  process.execPath,
+  ["node_modules/vite/bin/vite.js", "--port", String(PORT), "--strictPort"],
+  { cwd: new URL("..", import.meta.url).pathname, stdio: ["ignore", "pipe", "pipe"] },
+);
 server.stdout.pipe(log);
 server.stderr.pipe(log);
 
