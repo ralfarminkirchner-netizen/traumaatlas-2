@@ -47,7 +47,7 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
   const glyphTex = useMemo(() => makeGlyphTexture(isl.glyph), [isl.glyph]);
   const phase = useMemo(() => Math.abs(isl.x * 0.37 + isl.y * 0.11) % (Math.PI * 2), [isl]);
   const ringGeos = useMemo(
-    () => [0.92, 1.22, 1.52].map((r) => new THREE.TorusGeometry(r, 0.018, 8, 72)),
+    () => [1.45, 1.9, 2.35].map((r) => new THREE.TorusGeometry(r, 0.022, 8, 72)),
     [],
   );
 
@@ -122,12 +122,12 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
       <group ref={shaftRef} position={[0, 1.55, 0]}>
         {[0, Math.PI / 2].map((ry, i) => (
           <mesh key={i} rotation={[0, ry, 0]}>
-            <planeGeometry args={[1.15, 3.1]} />
+            <planeGeometry args={[1.7, 3.8]} />
             <meshBasicMaterial
               map={getShaftTexture()}
               color={color}
               transparent
-              opacity={0.32}
+              opacity={0.42}
               blending={THREE.AdditiveBlending}
               depthWrite={false}
               side={THREE.DoubleSide}
@@ -171,7 +171,7 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
       </mesh>
       {/* unsichtbarer Klick-Körper */}
       <mesh visible={false} position={[0, 1.6, 0]} onClick={click} onPointerOver={over} onPointerOut={out}>
-        <cylinderGeometry args={[1.7, 1.7, 3.2, 12]} />
+        <cylinderGeometry args={[2.6, 2.6, 3.6, 12]} />
         <meshBasicMaterial />
       </mesh>
     </group>
