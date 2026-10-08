@@ -284,7 +284,12 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
           }
           const an = anchor.current;
           if (an) {
-            el.style.transform = `translate(-50%, -112%) translate(${an.x.toFixed(1)}px, ${an.y.toFixed(1)}px)`;
+            // absolute Top-Kante rechnen und ins Sichtfeld klemmen — die Karte
+            // darf nie aus dem Viewport rutschen (sonst unerreichbare Buttons)
+            const h = el.offsetHeight;
+            const stageH = (el.offsetParent?.clientHeight ?? window.innerHeight) - 8;
+            const top = Math.min(Math.max(an.y - h - 14, 10), Math.max(10, stageH - h - 10));
+            el.style.transform = `translate(-50%, 0) translate(${an.x.toFixed(1)}px, ${top.toFixed(1)}px)`;
           }
         }
       }
@@ -307,7 +312,7 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
   return (
     <div
       ref={ref}
-      className="absolute z-20 w-[330px] max-w-[86vw] rounded-2xl border border-white/10 bg-[#0d0a07]/92 p-5 shadow-2xl backdrop-blur-md"
+      className="ta3-scroll absolute z-20 w-[330px] max-w-[86vw] max-h-[76vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0d0a07]/92 p-5 shadow-2xl backdrop-blur-md"
       style={style}
       role="dialog"
       aria-label={`Phänomen: ${p.label}`}
