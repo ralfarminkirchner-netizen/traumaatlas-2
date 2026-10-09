@@ -137,7 +137,7 @@ export default function BaukastenView() {
   const exportProgram = () => {
     const byPhase = (ph: PhaseId) => programItems.filter((p) => phaseFor(p.id) === ph);
     const text = [
-      "TRAUMAATLAS 3 — Mein Programm",
+      "TRAUMAATLAS 4 — Mein Programm",
       `Exportiert: ${new Date().toLocaleString("de-DE")}`,
       "",
       ...phaseInfos.map((ph) =>
