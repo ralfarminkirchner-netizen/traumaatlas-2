@@ -122,6 +122,23 @@ try {
       await page.screenshot({ path: `${SHOTS}/arms.png` });
     }
 
+    if (scenario === "body") {
+      // Starre Test-Position: Verdrängungs-Mulde sichtbar — freies Wasser,
+      // Zeiger auf die Körperstelle, moderate Draufsicht
+      await page.evaluate(() => {
+        const b = window.__ta3body;
+        b.x = 10; b.z = 8; b.r = 5.5; b.strength = 1.2; b.active = 1;
+      });
+      await page.mouse.move(720, 430);
+      await page.mouse.wheel(0, 260);
+      await sleep(2600);
+      await page.screenshot({ path: `${SHOTS}/body.png` });
+      // Gegenprobe: Feld aus → glattes Wasser
+      await page.evaluate(() => { window.__ta3body.active = 0; });
+      await sleep(900);
+      await page.screenshot({ path: `${SHOTS}/body-off.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);

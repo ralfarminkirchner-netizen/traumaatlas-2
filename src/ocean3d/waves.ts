@@ -65,6 +65,95 @@ export function waveNormal(x: number, z: number, t: number, calm = 0): [number, 
   return [-nx * inv, inv, -nz * inv];
 }
 
+// ── Schwimmer-Verdrängung (Druckfeld) ────────────────────────────────────────
+// Der Körper drückt das Wasser weg: Gauß-Mulde unter ihm + Randwulst ringsherum.
+// CPU- und GPU-Seite MÜSSEN deckungsgleich bleiben — gleiche Konstanten,
+// gleiche Formel (BODY_GLSL spiegelt bodyDisplacement/bodyGradient).
+
+export const BODY_PROFILE = {
+  /** Mulden-Profil: exp(-d² / (r² · BOWL_K)) */
+  BOWL_K: 0.85,
+  /** Randwulst: Radius-Faktor, Breite (rel. r), Höhe (rel. Muldentiefe) */
+  RIM_R: 1.5,
+  RIM_W: 0.62,
+  RIM_H: 0.38,
+} as const;
+
+/**
+ * Körperzustand auf der 3D-Ebene (Einheiten der 3D-Welt, nicht 2D-Weltkoordinaten).
+ * strength = Muldentiefe in Welteinheiten; active 0..1 blendet das Feld weich ein.
+ */
+export const bodyState = {
+  x: 0,
+  z: -2,
+  r: 4.2,
+  strength: 0.55,
+  active: 1,
+};
+
+/** Höhenbeitrag der Verdrängung an (x,z) — deckungsgleich mit bodyHeight() im Shader. */
+export function bodyDisplacement(x: number, z: number): number {
+  const w = bodyState.strength * bodyState.active;
+  if (w <= 0.0001) return 0;
+  const dx = x - bodyState.x;
+  const dz = z - bodyState.z;
+  const r = Math.max(bodyState.r, 0.001);
+  const d2 = dx * dx + dz * dz;
+  const s = Math.sqrt(d2);
+  const bowl = Math.exp(-d2 / (r * r * BODY_PROFILE.BOWL_K));
+  const u = (s - r * BODY_PROFILE.RIM_R) / (r * BODY_PROFILE.RIM_W);
+  const rim = BODY_PROFILE.RIM_H * Math.exp(-u * u);
+  return w * (rim - bowl);
+}
+
+/** Gradient (∂h/∂x, ∂h/∂z) der Verdrängung — für Neigung/Normale, gleiche Mathematik wie der Shader. */
+export function bodyGradient(x: number, z: number): [number, number] {
+  const w = bodyState.strength * bodyState.active;
+  if (w <= 0.0001) return [0, 0];
+  const dx = x - bodyState.x;
+  const dz = z - bodyState.z;
+  const r = Math.max(bodyState.r, 0.001);
+  const d2 = dx * dx + dz * dz;
+  const s = Math.sqrt(d2);
+  const bowl = Math.exp(-d2 / (r * r * BODY_PROFILE.BOWL_K));
+  const u = (s - r * BODY_PROFILE.RIM_R) / (r * BODY_PROFILE.RIM_W);
+  const rimE = BODY_PROFILE.RIM_H * Math.exp(-u * u);
+  // ∂bowl/∂xz = bowl · (-2/(r²·K)) · d
+  const kb = bowl * (-2 / (r * r * BODY_PROFILE.BOWL_K));
+  // ∂rim/∂xz = rimE · (-2u/(r·W)) · (d/s)
+  const kr = s > 1e-4 ? (rimE * (-2 * u)) / (r * BODY_PROFILE.RIM_W) / s : 0;
+  const k = w * (kr - kb);
+  return [k * dx, k * dz];
+}
+
+/** GLSL: Uniform + Funktion, exakte Spiegelung der CPU-Mathematik oben. */
+export const BODY_GLSL = /* glsl */ `
+uniform vec4 uBody; // x, z, radius, stärke·aktiv (0 = aus)
+
+// Verdrängung des Schwimmer-Körpers: Mulde + Randwulst, mit Gradient für die Normale.
+float bodyHeight(vec2 xz, out vec2 grad) {
+  grad = vec2(0.0);
+  if (uBody.w <= 0.0001) return 0.0;
+  vec2 d = xz - uBody.xy;
+  float r = max(uBody.z, 0.001);
+  float d2 = dot(d, d);
+  float s = sqrt(d2);
+  float bowl = exp(-d2 / (r * r * ${BODY_PROFILE.BOWL_K}));
+  float u = (s - r * ${BODY_PROFILE.RIM_R}) / (r * ${BODY_PROFILE.RIM_W});
+  float rimE = ${BODY_PROFILE.RIM_H} * exp(-u * u);
+  float h = uBody.w * (rimE - bowl);
+  float kb = bowl * (-2.0 / (r * r * ${BODY_PROFILE.BOWL_K}));
+  float kr = s > 1e-4 ? (rimE * (-2.0 * u)) / (r * ${BODY_PROFILE.RIM_W}) / s : 0.0;
+  grad = uBody.w * (kr - kb) * d;
+  return h;
+}
+`;
+
+// QA-/Debug-Spiegel: Körperzustand am Window lesbar/stellbar (Probes, shot.mjs)
+if (typeof window !== "undefined") {
+  (window as unknown as { __ta3body?: typeof bodyState }).__ta3body = bodyState;
+}
+
 // ── GLSL ─────────────────────────────────────────────────────────────────────
 
 export const GERSTNER_COUNT = GERSTNER.length;

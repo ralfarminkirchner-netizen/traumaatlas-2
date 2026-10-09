@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL } from "./waves";
+import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, bodyState } from "./waves";
 import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
@@ -17,6 +17,7 @@ import { ISLANDS } from "../ocean/world";
 const VERT = /* glsl */ `
 ${GERSTNER_GLSL}
 ${RIPPLE_GLSL}
+${BODY_GLSL}
 
 uniform mat4 uTextureMatrix;
 
@@ -36,6 +37,12 @@ void main() {
   float ringFoam;
   float rh = rippleHeight(position.xz, ringFoam);
   p.y += rh;
+
+  // Schwimmer-Verdrängung: Mulde + Randwulst, Normale um den Gradienten kippen
+  vec2 bgrad;
+  float bh = bodyHeight(position.xz, bgrad);
+  p.y += bh;
+  nrm = normalize(vec3(nrm.x - bgrad.x, nrm.y, nrm.z - bgrad.y));
 
   vWorldPos = p;
   vNormal = nrm;
@@ -326,6 +333,7 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uBuoyColor: { value: buoyCol },
           uBuoyCount: { value: 0 },
           uRipples: { value: ripples },
+          uBody: { value: new THREE.Vector4(0, 0, 1, 0) },
         },
       ]),
     });
@@ -360,6 +368,10 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
   useFrame(({ gl, scene, camera, clock }) => {
     const mat = material;
     mat.uniforms.uTime.value = clock.elapsedTime;
+
+    // Schwimmer-Druckfeld: Körperzustand → Uniform (weich ein-/ausgeblendet über w)
+    const uB = mat.uniforms.uBody.value as THREE.Vector4;
+    uB.set(bodyState.x, bodyState.z, Math.max(bodyState.r, 0.001), bodyState.strength * bodyState.active);
 
     // Stille beruhigt die Wellen (weich gedämpft)
     const target = projStore.calm;
