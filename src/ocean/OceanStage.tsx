@@ -17,7 +17,8 @@ import { webgl2Available } from "@/hooks/use-webgl";
 import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
 import { splat3D, projStore, screenToWater } from "../ocean3d/projStore";
-import { swimmer } from "../ocean3d/swimmer";
+import { swimmer, driveKeys, mouseLook } from "../ocean3d/swimmer";
+import { WILDLINGS, wildState, catchWildling, wildProgress } from "../ocean/wildlife";
 import { w2x, w2z, x2w, z2w } from "../ocean3d/coords";
 import { seaBefund } from "@/kinformer/seaBefund";
 
@@ -536,6 +537,66 @@ function PhenomenaLabels3D() {
   );
 }
 
+// ── Wildling-Labels über der 3D-Szene (nur bemerkte, imperativ verwaltet) ───
+
+const wildById = new Map(WILDLINGS.map((w) => [w.id, w]));
+
+function WildlifeLabels() {
+  const container = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const root = container.current;
+    if (!root) return;
+    const els = new Map<string, HTMLButtonElement>();
+    let raf = 0;
+    const tick = () => {
+      const seen = new Set<string>();
+      for (const [id, pr] of projStore.wildLabels) {
+        if (!pr.visible) continue;
+        seen.add(id);
+        let el = els.get(id);
+        const w = wildById.get(id);
+        if (!w) continue;
+        if (!el) {
+          el = document.createElement("button");
+          el.type = "button";
+          el.className = "ta3-wildlabel";
+          el.setAttribute("aria-label", `Phänomen begegnen: ${w.label}`);
+          el.style.cssText =
+            "position:absolute;left:0;top:0;transform:translate(-50%,-100%);background:transparent;border:0;cursor:pointer;white-space:nowrap;padding:2px 6px;pointer-events:auto;";
+          el.innerHTML = `<span style="font-family:Fraunces,serif;font-size:13px;color:#ede4d4;text-shadow:0 2px 10px rgba(0,0,0,0.9);display:block;">${
+            w.label.length > 30 ? w.label.slice(0, 28) + "…" : w.label
+          }</span><span style="display:block;height:1px;background:${w.color};opacity:0.7;margin-top:1px;"></span>`;
+          el.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const st = wildState.get(id);
+            catchWildling(w);
+            if (st) splat3D(st.x, st.y, 1.5);
+          });
+          root.appendChild(el);
+          els.set(id, el);
+        }
+        el.style.transform = `translate(-50%, -100%) translate(${pr.sx.toFixed(1)}px, ${(pr.sy - 8).toFixed(1)}px)`;
+      }
+      for (const [id, el] of els) {
+        if (!seen.has(id)) {
+          el.remove();
+          els.delete(id);
+        }
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const el of els.values()) el.remove();
+      els.clear();
+    };
+  }, []);
+
+  return <div ref={container} className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true" />;
+}
+
 // ── Eingabe ──────────────────────────────────────────────────────────────────
 
 function PhenomenonInput() {
@@ -634,6 +695,12 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
             })()}
           </p>
         )}
+        {/* Sammlung: entdeckte Wildlinge (Catch 'em all) */}
+        <p className="mt-1 text-[10px] tracking-[0.2em] text-white/30" aria-label={`Entdeckt: ${wildProgress().caught} von ${wildProgress().total}`}>
+          {wildProgress().caught > 0
+            ? `Entdeckt ${wildProgress().caught} / ${wildProgress().total}`
+            : "Wildlinge treiben um die Inseln — geh ihnen nah"}
+        </p>
       </div>
 
       <div className="pointer-events-auto flex flex-col items-end gap-2">
@@ -696,6 +763,35 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   });
   const pendingIsland = useRef<IslandId | null>(null);
   const ambient = useRef({ t: 0, next: 0 });
+
+  // Tastatur-Fahrt: WASD/Pfeile (Third-Person-Rennspiel) — nie im Eingabefeld
+  useEffect(() => {
+    if (!use3D) return;
+    const map: Record<string, string> = {
+      w: "w", a: "a", s: "s", d: "d",
+      arrowup: "w", arrowleft: "a", arrowdown: "s", arrowright: "d",
+    };
+    const down = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+      const k = map[e.key.toLowerCase()];
+      if (k) { driveKeys.add(k); e.preventDefault(); }
+    };
+    const up = (e: KeyboardEvent) => {
+      const k = map[e.key.toLowerCase()];
+      if (k) driveKeys.delete(k);
+    };
+    const blur = () => driveKeys.clear();
+    window.addEventListener("keydown", down);
+    window.addEventListener("keyup", up);
+    window.addEventListener("blur", blur);
+    return () => {
+      window.removeEventListener("keydown", down);
+      window.removeEventListener("keyup", up);
+      window.removeEventListener("blur", blur);
+      driveKeys.clear();
+    };
+  }, [use3D]);
 
   // Haupt-Loop: Kamera, Physik, Kielwasser, stille Mechanik
   useEffect(() => {
@@ -821,6 +917,8 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         projStore.pointer.cy = e.clientY;
         projStore.pointer.t = now;
         projStore.pointer.alive = true;
+        // Maus-Look: horizontale Bewegung lenkt (wirkt voll in der Tastatur-Fahrt)
+        mouseLook.dx += e.movementX || 0;
 
         if (p.down) {
           if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6) p.moved = true;
@@ -932,6 +1030,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
           </div>
           <IslandLabels3D onSail={sail} />
           <PhenomenaLabels3D />
+          <WildlifeLabels />
           <PhenomenonCard mode3d />
         </>
       ) : (

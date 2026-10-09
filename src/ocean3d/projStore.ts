@@ -13,6 +13,8 @@ export const projStore = {
   labels: new Map<string, LabelProj>(),
   /** Phänomen-Id → projizierte Position */
   phen: new Map<string, { sx: number; sy: number; visible: boolean }>(),
+  /** Wildling-Id → projizierte Position (nur bemerkte, ungefangene) */
+  wildLabels: new Map<string, { sx: number; sy: number; visible: boolean }>(),
   /** stille Mechanik: 0 = normal, 1 = ganz still */
   calm: 0,
   /** Klick auf eine 3D-Kapitel-Formation → OceanStage-Segelfluss */

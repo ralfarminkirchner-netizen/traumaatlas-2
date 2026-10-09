@@ -48,11 +48,15 @@ export function CameraRig() {
     lastCam.current = { x: s.cam.x, y: s.cam.y, t };
     const speed = Math.hypot(vx, vy);
     let targetYaw = 0;
-    if (speed > 40) {
+    const drive = swimmer.driveMix;
+    if (drive > 0.2) {
+      // Verfolgungskamera in der Tastatur-Fahrt: hinter der Fahrtrichtung (Rennspiel)
+      targetYaw = swimmer.heading * drive;
+    } else if (speed > 40) {
       // nur noch eine leise Andeutung von Kurs — kein Kippen der Welt
       targetYaw = THREE.MathUtils.clamp(Math.atan2(vx, -vy) * 0.12, -0.2, 0.2);
     }
-    const targetRoll = -targetYaw * 0.1;
+    const targetRoll = -targetYaw * 0.06;
 
     // Beim Drag: direkte Kopplung (kein Gummi), Schweben fast aus
     const dragging = projStore.dragging;
@@ -70,7 +74,9 @@ export function CameraRig() {
     sm.h += (h - sm.h) * kSlow;
     sm.dist += (dist - sm.dist) * kSlow;
     sm.fov += (fov - sm.fov) * kSlow;
-    sm.yaw += (targetYaw - sm.yaw) * kSlow;
+    // Winkel weich nachführen — wrap-sicher (Heading kann über ±π drehen)
+    const dYaw = ((targetYaw - sm.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    sm.yaw += dYaw * kSlow;
     sm.roll += (targetRoll - sm.roll) * kSlow;
 
     // Position: hinter/über dem Ziel (Süden, Blick nach Norden), Yaw versetzt die Kamera seitlich

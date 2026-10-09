@@ -39,17 +39,9 @@ try {
   await page.locator("#ta3-phen-input").waitFor({ state: "attached", timeout: 60000 });
   await sleep(3000);
 
-  // ── 1) Zeiger-Führung: Körper folgt dem projizierten Wasserpunkt ──
+  // ── 1) Der Schwimmer IST der Zeiger: keine Feder, kein Nachhinken ──
   await page.mouse.move(500, 600, { steps: 3 });
-  await sleep(2600);
-  const follow = await page.evaluate(() => {
-    const sw = window.__ta3swim;
-    const pr = window.__ta3proj;
-    const w = window.__ta3ocean();
-    void pr; void w;
-    return { x: sw.x, z: sw.z, v: Math.hypot(sw.vx, sw.vz) };
-  });
-  // Zielpunkt (500,600) nochmal projizieren und mit Körper vergleichen
+  await sleep(1200);
   const dist = await page.evaluate(async () => {
     const mod = await import("/src/ocean3d/projStore.ts");
     const cmod = await import("/src/ocean3d/coords.ts");
@@ -58,21 +50,54 @@ try {
     const sw = window.__ta3swim;
     return Math.hypot(cmod.w2x(w.wx) - sw.x, cmod.w2z(w.wy) - sw.z);
   });
-  ok(dist < 2.5, `Zeiger-Führung: Körper erreicht den Zeigerpunkt (Rest ${dist.toFixed(2)} 3D-Einheiten)`);
-  ok(follow.v < 26, `Tempo-Deckel eingehalten (v=${follow.v.toFixed(1)})`);
+  ok(dist < 0.6, `Zeiger-Direktheit: Körper sitzt AUF dem Zeigerpunkt (Rest ${dist.toFixed(2)})`);
 
-  // ── 2) Tempo-Deckel auch bei schnellem Sweep ──
+  // ── 2) Tastatur-Fahrt: W treibt entlang Heading 0 (Norden), Tempo gedeckelt ──
+  const z0 = await page.evaluate(() => { window.__ta3swim.heading = 0; return window.__ta3swim.z; });
+  await page.keyboard.down("w");
   let vmax = 0;
-  const sweep = (async () => {
-    for (let i = 0; i < 30; i++) await page.mouse.move(300 + i * 30, 300 + Math.sin(i / 3) * 150, { steps: 1 });
-  })();
-  for (let i = 0; i < 14; i++) {
-    const v = await page.evaluate(() => Math.hypot(window.__ta3swim.vx, window.__ta3swim.vz));
-    if (v > vmax) vmax = v;
-    await sleep(90);
+  let active = false;
+  // warten bis die Fahrt aktiv ist (mix > 0.6), dann 1.5 s fahren lassen —
+  // auf der Last-Maschine läuft die Seite in Zeitlupe (~5 fps)
+  for (let i = 0; i < 24; i++) {
+    const s = await page.evaluate(() => ({ v: Math.hypot(window.__ta3swim.vx, window.__ta3swim.vz), mix: window.__ta3swim.driveMix }));
+    if (s.v > vmax) vmax = s.v;
+    if (s.mix > 0.6) { active = true; break; }
+    await sleep(150);
   }
-  await sweep;
-  ok(vmax > 3 && vmax <= 24.5, `Tempo gedeckelt bei Schwung (vmax=${vmax.toFixed(1)} ≤ 24)`);
+  await sleep(3000); // Sim-Zeit auf der Zeitlupen-Maschine (~5 fps ≙ 0.5 s)
+  const z1 = await page.evaluate(() => window.__ta3swim.z);
+  await page.keyboard.up("w");
+  ok(active, `Fahrt-Modus aktiviert (mix > 0.6)`);
+  ok(z1 < z0 - 1, `W fährt vorwärts/Norden (Δz ${(z1 - z0).toFixed(1)})`);
+  ok(vmax > 2 && vmax <= 30.5, `Tempo in der Fahrt gedeckelt (vmax=${vmax.toFixed(1)} ≤ 30)`);
+
+  // ── 2b) Maus-Look lenkt die Fahrtrichtung ──
+  const h0 = await page.evaluate(() => window.__ta3swim.heading);
+  await page.keyboard.down("w");
+  for (let i = 0; i < 10; i++) await page.mouse.move(720 + i * 24, 450, { steps: 1 });
+  await page.keyboard.up("w");
+  await sleep(200);
+  const h1 = await page.evaluate(() => window.__ta3swim.heading);
+  ok(Math.abs(h1 - h0) > 0.4, `Maus-Look dreht die Fahrtrichtung (Δ ${(h1 - h0).toFixed(2)} rad)`);
+
+  // ── 2c) Wave-Race-Hopfen: Airtime endet mit Landung ──
+  // (auf der Last-Maschine läuft rAF gebremst — großzügiges Zeitfenster)
+  const hop = await page.evaluate(async () => {
+    const sw = window.__ta3swim;
+    sw.vy = 3.2; sw.air = true;
+    const t0 = performance.now();
+    return await new Promise((res) => {
+      const tick = () => {
+        if (!sw.air) return res({ landed: true, ms: performance.now() - t0, pulse: sw.landPulse });
+        if (performance.now() - t0 > 12000) return res({ landed: false, ms: 12000, pulse: 0 });
+        requestAnimationFrame(tick);
+      };
+      tick();
+    });
+  });
+  ok(hop.landed && hop.ms > 150, `Airtime endet in Landung (${Math.round(hop.ms)} ms Flug)`);
+  ok(hop.pulse > 0.1, `Landung stößt das Druckfeld an (Puls ${hop.pulse.toFixed(2)})`);
 
   // ── 3) Feld-Kräfte: Sog (gleiche Erregungslage) und Barriere (Gegensatz) ──
   const fields = await page.evaluate(async () => {

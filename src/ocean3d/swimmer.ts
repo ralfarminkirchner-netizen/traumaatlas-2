@@ -1,13 +1,15 @@
-// Der Schwimmer: ein Körper mit Gewicht auf der Oberfläche.
-// Zeiger-Führung per Feder-Dämpfung (der Körper schwimmt, teleportiert nicht),
-// Phänomen-Felder (Sog/Barriere) als echte Kräfte, Wachstum durch Annehmen.
+// Der Schwimmer IST der Mauszeiger: die Verdrängung sitzt direkt unter dem
+// Cursor und malt Wellen ins Wasser — kein Nachhinken, keine Fernsteuerung.
+// Alternativ direkte Fahrt per WASD/Pfeiltasten + Maus-Look (Third-Person-
+// Rennspiel): A/D und Maus-X lenken, W/S Schub und Bremse.
+// Vertikal: der Körper hüpft über die Kämme (Wave-Race-Prinzip): Airtime bei
+// Tempo über die Wellenflanke, Ballistik, Lande-Gischt.
 //
 // Reines TypeScript OHNE three.js — die 2D-/Legacy-Seite darf das importieren.
-// Koordinaten: 3D-Ebene (x,z), Umrechnung über coords.ts.
 
 import { getOceanState, setOcean } from "../ocean/world";
 import { w2x, w2z } from "./coords";
-import { bodyState } from "./waves";
+import { bodyState, waveHeight } from "./waves";
 import { projStore, screenToWater, splat3D } from "./projStore";
 import { x2w, z2w } from "./coords";
 
@@ -17,8 +19,22 @@ export const swimmer = {
   /** Position auf der 3D-Ebene (Start: freies Wasser südöstlich des Navigators) */
   x: 6,
   z: 5,
+  /** geglättete Bewegungsgeschwindigkeit (für Wellen, Hopfen, Kamera) */
   vx: 0,
   vz: 0,
+  /** Fahrtrichtung in Radiant (0 = Nord = -z) — Maus-Look + A/D lenken */
+  heading: 0,
+  /** Vertikal-Dynamik: Höhe über y=0, Vertikalgeschwindigkeit, Airtime */
+  y: 0,
+  vy: 0,
+  air: false,
+  /** 0 = Zeiger direkt, 1 = Tastatur-Fahrt (weicher Übergang) */
+  driveMix: 0,
+  /** Lande-Stoß: verstärkt kurz das Druckfeld nach Airtime */
+  landPulse: 0,
+  /** Zeitpunkt des letzten Fahrt-Beginns / -Endes (Zeiger-Übergabe ohne Ruck) */
+  driveStartT: -1e9,
+  lastDriveEndT: -1e9,
   /** Wachstumsstufe (Anzahl angenommener Phänomene) */
   level: 0,
   /** bereits angenommene Phänomen-Ids (Wachstum nur einmal pro Begegnung) */
@@ -31,6 +47,11 @@ export const swimmer = {
   smActive: 0,
 };
 
+/** Tastatur-Fahrt: gehaltene Richtungstasten ("w"|"a"|"s"|"d") */
+export const driveKeys = new Set<string>();
+/** Maus-Look: horizontale Zeiger-Deltas, werden pro Frame verbraucht */
+export const mouseLook = { dx: 0 };
+
 // QA-/Debug-Spiegel
 if (typeof window !== "undefined") {
   (window as unknown as { __ta3swim?: typeof swimmer }).__ta3swim = swimmer;
@@ -41,9 +62,13 @@ if (typeof window !== "undefined") {
 export const SWIM = {
   baseR: 4.2,          // Druckfeld-Radius (3D-Einheiten)
   baseStrength: 0.55,  // Muldentiefe
-  spring: 4.2,         // Feder zum Führungspunkt
-  damp: 3.6,           // Dämpfung (Gleiten)
-  maxSpeed: 24,        // 3D-Einheiten/s — er schwimmt, teleportiert nicht
+  thrust: 30,          // Schubbeschleunigung (Tastatur-Fahrt)
+  drag: 2.0,           // Wasserwiderstand
+  maxSpeed: 30,        // 3D-Einheiten/s in der Fahrt
+  turnRate: 2.2,       // Lenkrate A/D (rad/s, Basis)
+  lookRate: 0.0042,    // Maus-Look-Empfindlichkeit (rad/px)
+  gravity: 5.4,        // Fallbeschleunigung beim Hüpfen (Spielgefühl, nicht real)
+  launchSlope: 1.1,    // min. vertikale Oberflächengeschwindigkeit für Airtime
   fieldBase: 11,       // Feldreichweite der Phänomene
 } as const;
 
@@ -120,17 +145,15 @@ export function fieldForces(): FieldForce {
     const uz = dz / d;
     const fall = 1 - d / R;
     if (sign > 0) {
-      // Sog: sanft, wächst zur Mitte
       const f = 7.5 * fall * fall;
       fx += ux * f;
       fz += uz * f;
       if (d < nearD) { nearD = d; kind = "sog"; nearId = p.id; }
     } else {
-      // Barriere: steil, kalt — drückt zurück und frisst Annäherungs-Schwung
       const f = 30 * Math.pow(fall, 1.6);
       fx -= ux * f;
       fz -= uz * f;
-      const vin = swimmer.vx * ux + swimmer.vz * uz; // Geschwindigkeit Richtung Phänomen
+      const vin = swimmer.vx * ux + swimmer.vz * uz;
       if (vin > 0) {
         fx -= ux * vin * 2.2;
         fz -= uz * vin * 2.2;
@@ -141,63 +164,103 @@ export function fieldForces(): FieldForce {
   return { fx, fz, kind, nearId };
 }
 
-// ── Schritt (pro Frame aus Swimmer.tsx) ──────────────────────────────────────
+// ── Schritt (pro Frame aus SwimmerBody) ──────────────────────────────────────
 
 export interface SwimStepOut {
   speed: number;
-  guidance: boolean;
+  mode: "zeiger" | "fahrt" | "ruhe";
   field: FieldForce;
+  landed: number; // Lande-Stärke diesen Frame (0 = keine Landung)
 }
 
-export function stepSwimmer(dt: number): SwimStepOut {
+let _prevH = 0;
+
+export function stepSwimmer(dt: number, t: number): SwimStepOut {
   const s = getOceanState();
   const inactive = !!s.view || !!s.sailing;
-
-  // ── Führungspunkt bestimmen: Zeiger (frisch) schlägt Klick-Ziel ──
-  let gx = swimmer.x;
-  let gz = swimmer.z;
-  let guidance = false;
   const ptr = projStore.pointer;
-  if (!inactive && ptr && ptr.alive) {
+
+  // Fahr-Modus-Mischung: Tasten gehalten → Fahrt, sonst Zeiger
+  const now = performance.now();
+  const driving = driveKeys.size > 0 && !inactive;
+  const wasDriving = swimmer.driveMix > 0.5;
+  swimmer.driveMix += ((driving ? 1 : 0) - swimmer.driveMix) * (1 - Math.pow(0.015, dt));
+  if (driving && !wasDriving && swimmer.driveMix > 0.5) swimmer.driveStartT = now;
+  if (!driving && wasDriving && swimmer.driveMix <= 0.5) swimmer.lastDriveEndT = now;
+
+  // Maus-Look: Heading aus horizontalem Zeiger-Delta (wirkt voll in der Fahrt,
+  // leicht auch im Zeiger-Modus, damit der Übergang weich bleibt)
+  swimmer.heading += mouseLook.dx * SWIM.lookRate * Math.max(swimmer.driveMix, 0.2);
+  mouseLook.dx = 0;
+
+  let mode: SwimStepOut["mode"] = "ruhe";
+  let speed = Math.hypot(swimmer.vx, swimmer.vz);
+
+  if (swimmer.driveMix > 0.5) {
+    // ── Tastatur-Fahrt (Third-Person-Rennspiel) ──
+    mode = "fahrt";
+    const fwd = (driveKeys.has("w") ? 1 : 0) - (driveKeys.has("s") ? 0.55 : 0);
+    const steer = (driveKeys.has("d") ? 1 : 0) - (driveKeys.has("a") ? 1 : 0);
+    // A/D lenkt — stärker bei Tempo (Rennspiel), nicht im Stand
+    swimmer.heading -= steer * dt * SWIM.turnRate * (0.35 + Math.min(1, speed / 14));
+    const hx = Math.sin(swimmer.heading);
+    const hz = -Math.cos(swimmer.heading);
+    swimmer.vx += hx * fwd * SWIM.thrust * dt;
+    swimmer.vz += hz * fwd * SWIM.thrust * dt;
+    const dragF = Math.exp(-SWIM.drag * dt);
+    swimmer.vx *= dragF;
+    swimmer.vz *= dragF;
+    // Feld-Kräfte wirken in der Fahrt voll
+    const field = fieldForces();
+    swimmer.vx += field.fx * dt;
+    swimmer.vz += field.fz * dt;
+    const maxV = swimmerMaxSpeed();
+    const v = Math.hypot(swimmer.vx, swimmer.vz);
+    if (v > maxV) {
+      swimmer.vx = (swimmer.vx / v) * maxV;
+      swimmer.vz = (swimmer.vz / v) * maxV;
+    }
+    swimmer.x += swimmer.vx * dt;
+    swimmer.z += swimmer.vz * dt;
+    speed = Math.min(v, maxV);
+  } else if (
+    !inactive && ptr && ptr.alive &&
+    now - swimmer.lastDriveEndT > 1200 && // Schonfrist nach der Fahrt: kein Rücksprung
+    ptr.t > swimmer.driveStartT           // erst wenn der Zeiger wieder bewegt wurde
+  ) {
+    // ── Der Schwimmer IST der Zeiger: direkte Projektion, kein Nachhinken ──
     const w = screenToWater(ptr.cx, ptr.cy);
     if (w) {
-      swimmer.swimTarget = null; // Zeiger-Führung schlägt Klick-segeln
-      gx = w2x(w.wx);
-      gz = w2z(w.wy);
-      guidance = true;
+      mode = "zeiger";
+      const tx = w2x(w.wx);
+      const tz = w2z(w.wy);
+      // Momentangeschwindigkeit aus der Zeigerbewegung (geglättet) — treibt
+      // Wellen, Verdrängungsdynamik, Hopfen und Kamera, nie die Position
+      const ivx = (tx - swimmer.x) / dt;
+      const ivz = (tz - swimmer.z) / dt;
+      swimmer.vx = swimmer.vx * 0.7 + ivx * 0.3;
+      swimmer.vz = swimmer.vz * 0.7 + ivz * 0.3;
+      swimmer.x = tx;
+      swimmer.z = tz;
+      const sp = Math.hypot(swimmer.vx, swimmer.vz);
+      // Heading nur aus echter Zeigerbewegung — nicht aus Kamera-Bob-Jitter,
+      // sonst kippt die Fahrtrichtung beim Übergang in die Tastatur-Fahrt
+      if (sp > 2 && performance.now() - ptr.t < 300) {
+        swimmer.heading = Math.atan2(swimmer.vx, -swimmer.vz);
+      }
+      speed = Math.min(sp, 45);
     }
-  }
-  if (!guidance && swimmer.swimTarget && !inactive) {
-    gx = swimmer.swimTarget.x;
-    gz = swimmer.swimTarget.z;
-    guidance = true;
-    if (Math.hypot(gx - swimmer.x, gz - swimmer.z) < 1.2) swimmer.swimTarget = null;
-  }
-
-  // ── Feder-Dämpfung (Masse) ──
-  if (guidance) {
-    swimmer.vx += (gx - swimmer.x) * SWIM.spring * dt;
-    swimmer.vz += (gz - swimmer.z) * SWIM.spring * dt;
+  } else {
+    // ── Ruhe: ausgleiten ──
+    const dragF = Math.exp(-SWIM.drag * 1.4 * dt);
+    swimmer.vx *= dragF;
+    swimmer.vz *= dragF;
+    swimmer.x += swimmer.vx * dt;
+    swimmer.z += swimmer.vz * dt;
+    speed = Math.hypot(swimmer.vx, swimmer.vz);
   }
 
-  // ── Phänomen-Felder ──
-  const field = fieldForces();
-  swimmer.vx += field.fx * dt;
-  swimmer.vz += field.fz * dt;
-
-  // ── Integration: gleiten, Tempo-Deckel, Weltgrenzen (weich) ──
-  const dampF = Math.exp(-SWIM.damp * dt);
-  swimmer.vx *= dampF;
-  swimmer.vz *= dampF;
-  const maxV = swimmerMaxSpeed();
-  const v = Math.hypot(swimmer.vx, swimmer.vz);
-  if (v > maxV) {
-    swimmer.vx = (swimmer.vx / v) * maxV;
-    swimmer.vz = (swimmer.vz / v) * maxV;
-  }
-  swimmer.x += swimmer.vx * dt;
-  swimmer.z += swimmer.vz * dt;
-  // Weltgrenzen: Plane ist 640×640, Welt 104×64 → ±50 / ±30 mit Rand
+  // Weltgrenzen (weich)
   const BX = 49;
   const BZ = 30;
   if (swimmer.x < -BX) { swimmer.x = -BX; swimmer.vx = Math.abs(swimmer.vx) * 0.4; }
@@ -205,8 +268,37 @@ export function stepSwimmer(dt: number): SwimStepOut {
   if (swimmer.z < -BZ) { swimmer.z = -BZ; swimmer.vz = Math.abs(swimmer.vz) * 0.4; }
   if (swimmer.z > BZ) { swimmer.z = BZ; swimmer.vz = -Math.abs(swimmer.vz) * 0.4; }
 
+  // ── Wave-Race-Hopfen: Airtime über der Wellenflanke ──
+  const H = waveHeight(swimmer.x, swimmer.z, t, projStore.calm);
+  let landed = 0;
+  if (!swimmer.air) {
+    // vertikale Oberflächengeschwindigkeit entlang der Fahrt (Wellen + eigenes Tempo)
+    const dH = dt > 0 ? (H - _prevH) / dt : 0;
+    if (speed > 6.5 && dH > SWIM.launchSlope) {
+      swimmer.vy = Math.min(7, dH * 1.05 + speed * 0.05);
+      swimmer.air = true;
+    } else {
+      swimmer.y = H;
+    }
+  }
+  _prevH = H;
+  if (swimmer.air) {
+    swimmer.vy -= SWIM.gravity * dt;
+    swimmer.y += swimmer.vy * dt;
+    if (swimmer.y <= H && swimmer.vy < 0) {
+      // Landung: Gischt + Druckstoß
+      swimmer.air = false;
+      swimmer.y = H;
+      landed = Math.min(2, 0.5 + Math.abs(swimmer.vy) * 0.32);
+      swimmer.landPulse = Math.min(1.6, Math.abs(swimmer.vy) * 0.28);
+      splat3D(x2w(swimmer.x), z2w(swimmer.z), landed);
+      swimmer.vy = 0;
+    }
+  }
+  swimmer.landPulse *= Math.exp(-2.6 * dt);
+
   // ── Druckfeld-Zustand (weich geglättet in die Uniforms) ──
-  const k = 1 - Math.pow(0.01, dt); // schnelles, weiches Nachführen
+  const k = 1 - Math.pow(0.01, dt);
   swimmer.smR += (swimmerRadius() - swimmer.smR) * k;
   swimmer.smStrength += (swimmerStrength() - swimmer.smStrength) * k;
   const activeT = inactive ? 0 : 1;
@@ -214,13 +306,16 @@ export function stepSwimmer(dt: number): SwimStepOut {
   bodyState.x = swimmer.x;
   bodyState.z = swimmer.z;
   bodyState.r = swimmer.smR;
-  bodyState.strength = swimmer.smStrength;
+  // Lande-Stoß + Tempo drücken die Mulde tiefer (Gewicht spürbar)
+  const dyn = 1 + swimmer.landPulse + Math.min(0.35, speed * 0.008);
+  bodyState.strength = swimmer.smStrength * dyn;
   bodyState.active = swimmer.smActive;
 
-  return { speed: Math.min(v, maxV), guidance, field };
+  return { speed, mode, field: fieldForces(), landed };
 }
 
-/** Eigenwellen-Emission: Stakkato nach Tempo, Gischt-Burst bei hartem Wendepunkt/Halt. */
+/** Eigenwellen-Emission: das Wasser wird direkt bemalt — Stakkato nach Tempo,
+ *  Gischt-Burst bei hartem Wendepunkt oder plötzlichem Halt. */
 export class WakeEmitter {
   private acc = 0;
   private prevVx = 0;
@@ -228,14 +323,12 @@ export class WakeEmitter {
   step(dt: number, speed: number) {
     const lvl = swimmer.level;
     const size = 1 + 0.25 * Math.sqrt(lvl);
-    // fortlaufende Fronten bei ausreichendem Tempo
     this.acc += dt;
-    const interval = Math.max(0.14, 0.55 - speed * 0.016);
-    if (speed > 3 && this.acc > interval) {
+    const interval = Math.max(0.1, 0.5 - speed * 0.014);
+    if (speed > 2 && this.acc > interval) {
       this.acc = 0;
       splat3D(x2w(swimmer.x), z2w(swimmer.z), Math.min(1.1, (0.16 + speed * 0.02) * size));
     }
-    // Gischt-Burst: schneller Richtungswechsel oder plötzlicher Halt
     const pv = Math.hypot(this.prevVx, this.prevVz);
     if (pv > 8 && speed > 4) {
       const cos = (this.prevVx * swimmer.vx + this.prevVz * swimmer.vz) / (pv * speed);

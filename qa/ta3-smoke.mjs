@@ -122,9 +122,11 @@ async function runDesktop() {
   await page.waitForTimeout(400);
 
   // ── 3D-Checks: Bojen-Raycast → Brückenkarte, Übersichts-Zoom, Insel-Label ──
+  // (im Meer treiben inzwischen viele Körper — den ersten SICHTBAREN nehmen)
   const buoyPos = await page.evaluate(() => {
-    const first = [...(window.__ta3proj?.phen?.values() ?? [])][0];
-    return first && first.visible ? { sx: first.sx, sy: first.sy } : null;
+    const entries = [...(window.__ta3proj?.phen?.values() ?? [])];
+    const vis = entries.find((e) => e.visible && e.sx > 40 && e.sx < window.innerWidth - 40 && e.sy > 40 && e.sy < window.innerHeight - 120);
+    return vis ? { sx: vis.sx, sy: vis.sy } : null;
   });
   ok(!!buoyPos, "3D: Boje projiziert + sichtbar");
   if (buoyPos) {

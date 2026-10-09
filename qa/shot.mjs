@@ -173,6 +173,41 @@ try {
       await page.screenshot({ path: `${SHOTS}/${scenario}.png` });
     }
 
+    if (scenario === "schwarm") {
+      // Schwimmer neben einen Wildling setzen: Bemerken, Label, Schwarm um die Insel
+      await page.evaluate(async () => {
+        const wl = await import("/src/ocean/wildlife.ts");
+        const co = await import("/src/ocean3d/coords.ts");
+        for (const w of wl.WILDLINGS) {
+          const st = wl.wildState.get(w.id);
+          if (st.caught || w.home !== "navigator" || w.away) continue;
+          window.__ta3swim.x = co.w2x(st.x) + 2.5;
+          window.__ta3swim.z = co.w2z(st.y) + 1.5;
+          return;
+        }
+      });
+      await sleep(2600);
+      await page.screenshot({ path: `${SHOTS}/schwarm.png` });
+    }
+
+    if (scenario === "fahrt") {
+      // Tastatur-Fahrt mit Maus-Look (Rennspiel): W halten, leicht lenken
+      await page.keyboard.down("w");
+      for (let i = 0; i < 6; i++) await page.mouse.move(720 + i * 30, 430, { steps: 1 });
+      await sleep(1400);
+      await page.screenshot({ path: `${SHOTS}/fahrt.png` });
+      await page.keyboard.up("w");
+    }
+
+    if (scenario === "sprung") {
+      // Wave-Race-Airtime: Absprung über der Kammflanke (erzwungen, Bildmitte Flug)
+      await page.mouse.move(700, 520, { steps: 2 });
+      await sleep(900);
+      await page.evaluate(() => { const sw = window.__ta3swim; sw.vy = 3.4; sw.air = true; });
+      await sleep(330);
+      await page.screenshot({ path: `${SHOTS}/sprung.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);
