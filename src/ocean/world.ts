@@ -92,6 +92,13 @@ export function stageOf(p: Progress): number {
 
 const PROGRESS_KEY = "ta3-progress-v1";
 const PHENOMENA_KEY = "ta3-phenomena-v1";
+const RELEASED_KEY = "ta3-released-arms-v1";
+const armKey = (a: string, b: string) => [a, b].sort().join("|");
+let releasedArms = new Set<string>();
+try {
+  const raw = localStorage.getItem(RELEASED_KEY);
+  if (raw) releasedArms = new Set(JSON.parse(raw) as string[]);
+} catch { /* ignorieren */ }
 
 function loadProgress(): Progress {
   try {
@@ -332,6 +339,55 @@ export function setLexikonDoorGlowing(v: boolean) {
   if (state.lexikonDoorGlowing !== v) setOcean({ lexikonDoorGlowing: v });
 }
 
+// ── Wachstums-Handlungen (mit Körpergröße freigeschaltet) ───────────────────
+// releasedArms/armKey/RELEASED_KEY stehen oben bei den Persistenz-Schlüsseln
+// (werden schon beim Modul-Start von rebuildArms gelesen).
+
+/** Arm bewusst lösen — bleibt gelöst (rebuildArms respektiert releasedArms). */
+export function releaseArm(aId: string, bId: string) {
+  releasedArms.add(armKey(aId, bId));
+  try { localStorage.setItem(RELEASED_KEY, JSON.stringify([...releasedArms])); } catch { /* ok */ }
+  state = { ...state, arms: state.arms.filter((a) => armKey(a.a, a.b) !== armKey(aId, bId)) };
+  listeners.forEach((fn) => fn());
+}
+
+/** Zwei Phänomene zueinander tragen: sanfter Impuls auf beide Körper. */
+export function drawTogether(aId: string, bId: string) {
+  const a = state.phenomena.find((p) => p.id === aId);
+  const b = state.phenomena.find((p) => p.id === bId);
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const push = (p: Phenomenon) => {
+    const dx = mx - p.x;
+    const dy = my - p.y;
+    const d = Math.hypot(dx, dy) || 1;
+    p.vx += (dx / d) * Math.min(260, d * 0.9);
+    p.vy += (dy / d) * Math.min(260, d * 0.9);
+  };
+  push(a);
+  push(b);
+  listeners.forEach((fn) => fn());
+}
+
+/** Brücke in der Lesefläche umsortieren (Reihenfolge = Reihenfolge der Liste). */
+export function reorderLink(phenId: string, key: string, dir: -1 | 1) {
+  state = {
+    ...state,
+    phenomena: state.phenomena.map((p) => {
+      if (p.id !== phenId) return p;
+      const idx = p.links.findIndex((l) => `${l.targetType}:${l.targetId}` === key);
+      const j = idx + dir;
+      if (idx < 0 || j < 0 || j >= p.links.length) return p;
+      const links = [...p.links];
+      [links[idx], links[j]] = [links[j], links[idx]];
+      return { ...p, links };
+    }),
+  };
+  persistPhenomena();
+  listeners.forEach((fn) => fn());
+}
+
 // ── Arme („Ärmchen") ─────────────────────────────────────────────────────────
 
 function relatedness(a: Phenomenon, b: Phenomenon): { strength: number; reason: string } | null {
@@ -368,6 +424,8 @@ function rebuildArms() {
   for (let i = 0; i < ps.length; i++) {
     for (let j = i + 1; j < ps.length; j++) {
       const rel = relatedness(ps[i], ps[j]);
+      // bewusst gelöste Arme bleiben gelöst
+      if (releasedArms.has(armKey(ps[i].id, ps[j].id))) continue;
       // Anziehung wie Abstoßung (Schattenarbeit) wird ein Arm — Vorzeichen entscheidet
       if (rel && (rel.strength > 0.3 || rel.strength < -0.3)) {
         const existing = state.arms.find((a) => (a.a === ps[i].id && a.b === ps[j].id) || (a.a === ps[j].id && a.b === ps[i].id));
@@ -501,8 +559,33 @@ export function stepCamera(dt: number): boolean {
   return settled;
 }
 
-export function toggleOverview() {
-  const ov = !state.overview;
+/**
+ * Kamera folgt dem Schwimmer mit Totzone: der Körper darf im inneren Fenster
+ * frei schwimmen; erst am Fensterrand zieht die Kamera weich nach.
+ * Stille Mutation (kein Notify) — stepCamera meldet die Bewegung selbst.
+ */
+export function followCamDeadzone(bx: number, by: number, vw: number, vh: number) {
+  const c = state.camTarget;
+  const halfW = vw / (2 * c.zoom);
+  const halfH = vh / (2 * c.zoom);
+  const mx = halfW * 0.52;
+  const my = halfH * 0.4;
+  let nx = c.x;
+  let ny = c.y;
+  if (bx > c.x + mx) nx = bx - mx;
+  else if (bx < c.x - mx) nx = bx + mx;
+  if (by > c.y + my) ny = by - my;
+  else if (by < c.y - my) ny = by + my;
+  if (nx !== c.x || ny !== c.y) {
+    state.camTarget = {
+      ...c,
+      x: Math.min(WORLD.w, Math.max(0, nx)),
+      y: Math.min(WORLD.h, Math.max(0, ny)),
+    };
+  }
+}
+
+export function toggleOverview() {  const ov = !state.overview;
   state = { ...state, overview: ov };
   if (ov) {
     state.camTarget = { x: WORLD.w / 2, y: WORLD.h / 2, zoom: 0.24 };

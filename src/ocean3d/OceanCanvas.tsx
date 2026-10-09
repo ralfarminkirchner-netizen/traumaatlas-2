@@ -16,6 +16,7 @@ import { DriftParticles } from "./DriftParticles";
 import { Phenomena3D } from "./Phenomena3D";
 import { WakeRibbon } from "./WakeRibbon";
 import { Constellations3D } from "./Constellations3D";
+import { Swimmer } from "./SwimmerBody";
 
 const _v = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
@@ -89,6 +90,7 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       <ScreenToWaterBridge />
       <SkyDome />
       <OceanWater mobile={mobile} />
+      <Swimmer />
       <WakeRibbon />
       <Chapters3D />
       <Constellations3D />

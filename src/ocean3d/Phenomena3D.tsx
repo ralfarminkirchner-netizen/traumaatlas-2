@@ -10,6 +10,7 @@ import {
 } from "../ocean/world";
 import { w2x, w2z } from "./coords";
 import { waveHeight, waveNormal } from "./waves";
+import { swimmer } from "./swimmer";
 import { projStore, splat3D } from "./projStore";
 import { getHaloTexture } from "./textures";
 import { Arms3D } from "./Arms3D";
@@ -142,23 +143,35 @@ export function Phenomena3D() {
   useFrame(({ clock, camera }) => {
     const t = clock.elapsedTime;
     _buoyCache.length = 0;
-    // bei mehr als 14: die kameranächsten wählen
-    const sorted = phenomena.length > 14
+    // bei mehr als 13: die kameranächsten wählen (Slot 14 gehört dem Schwimmer)
+    const sorted = phenomena.length > 13
       ? [...phenomena].sort((pa, pb) =>
           Math.hypot(w2x(pa.x) - camera.position.x, w2z(pa.y) - camera.position.z) -
           Math.hypot(w2x(pb.x) - camera.position.x, w2z(pb.y) - camera.position.z),
         )
       : phenomena;
-    for (const p of sorted.slice(0, 14)) {
+    for (const p of sorted.slice(0, 13)) {
+      // Feld-Nähe des Schwimmers lässt die Boje aufleuchten (Sog/Barriere spürbar)
+      const bd = Math.hypot(w2x(p.x) - swimmer.x, w2z(p.y) - swimmer.z);
+      const near = Math.max(0, 1 - bd / 12);
       const pulse = 0.75 + 0.25 * Math.sin(t * 1.6 + p.bornAt / 900);
       _buoyCache.push({
         x: w2x(p.x),
         z: w2z(p.y),
-        r: 1.9,
-        i: 0.7 * pulse,
+        r: 1.9 + near * 1.2,
+        i: (0.7 + near * 0.9) * pulse,
         c: new THREE.Color(p.color),
       });
     }
+    // der Schwimmer selbst ist ein warmes Licht im Feld
+    const sgrow = 1 + 0.12 * Math.sqrt(swimmer.level);
+    _buoyCache.push({
+      x: swimmer.x,
+      z: swimmer.z,
+      r: 2.3 * sgrow,
+      i: 0.55 * swimmer.smActive * (0.9 + 0.1 * Math.sin(t * 0.55)),
+      c: new THREE.Color("#ffd9a0"),
+    });
     setWaterBuoys(_buoyCache);
   });
 

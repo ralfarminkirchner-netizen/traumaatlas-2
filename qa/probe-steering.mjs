@@ -38,39 +38,65 @@ try {
   await page.locator("#ta3-phen-input").waitFor({ state: "attached", timeout: 60000 });
   await sleep(3000);
 
-  const before = await page.evaluate(() => ({ ...window.__ta3ocean().camTarget }));
+  const before = await page.evaluate(() => ({ x: window.__ta3swim.x, z: window.__ta3swim.z }));
 
-  // 1) Klick auf offenes Wasser (unten links) → Kamera-Ziel wandert dorthin
+  // 1) Klick auf offenes Wasser (unten links) → Körper schwimmt dorthin
+  //    (Zeiger-Führung: der Zeiger ruht am Klickpunkt und führt den Körper)
+  const distTo = async () => page.evaluate(async () => {
+    const mod = await import("/src/ocean3d/projStore.ts");
+    const co = await import("/src/ocean3d/coords.ts");
+    const w = mod.screenToWater(300, 700);
+    if (!w) return Infinity;
+    const sw = window.__ta3swim;
+    return Math.hypot(co.w2x(w.wx) - sw.x, co.w2z(w.wy) - sw.z);
+  });
+  const d0 = await distTo();
   await page.mouse.click(300, 700);
-  await sleep(400);
-  const after = await page.evaluate(() => ({ ...window.__ta3ocean().camTarget }));
-  const movedDist = Math.hypot(after.x - before.x, after.y - before.y);
-  console.log("camTarget vorher/nachher:", JSON.stringify(before), JSON.stringify(after));
-  ok(movedDist > 150, `Wasser-Klick segelt gezielt (Δ ${Math.round(movedDist)})`);
+  await sleep(2200);
+  const d1 = await distTo();
+  ok(d1 < d0 - 1, `Wasser-Klick: Körper schwimmt zum Klickpunkt (${d0.toFixed(1)} → ${d1.toFixed(1)})`);
 
-  // 2) Drag schwenkt die Welt (Pan)
+  // Zeiger an anderer Stelle führt sofort weiter (Zeiger schlägt Klick-Ziel)
+  const distToPt = async (cx, cy) => page.evaluate(async ({ cx, cy }) => {
+    const mod = await import("/src/ocean3d/projStore.ts");
+    const co = await import("/src/ocean3d/coords.ts");
+    const w = mod.screenToWater(cx, cy);
+    if (!w) return Infinity;
+    const sw = window.__ta3swim;
+    return Math.hypot(co.w2x(w.wx) - sw.x, co.w2z(w.wy) - sw.z);
+  }, { cx, cy });
+  await page.mouse.move(1000, 300, { steps: 3 });
+  const dNew0 = await distToPt(1000, 300);
+  await sleep(2600);
+  const dNew1 = await distToPt(1000, 300);
+  ok(dNew1 < dNew0 - 1.5, `Zeiger-Führung führt weiter (${dNew0.toFixed(1)} → ${dNew1.toFixed(1)})`);
+
+  // 2) Drag in 3D = schnelles Schwimmen mit dem Zeiger (kein Welt-Pan mehr —
+  //    die Kamera folgt dem Körper, nicht dem Drag)
+  const preDrag = await page.evaluate(() => ({ x: window.__ta3swim.x, z: window.__ta3swim.z }));
   await page.mouse.move(720, 450);
   await page.mouse.down();
   for (let i = 0; i < 12; i++) await page.mouse.move(720 - i * 14, 450 - i * 6, { steps: 1 });
   await page.mouse.up();
-  await sleep(400);
-  const panned = await page.evaluate(() => ({ ...window.__ta3ocean().camTarget }));
-  const panDist = Math.hypot(panned.x - after.x, panned.y - after.y);
-  ok(panDist > 40, `Drag schwenkt die Welt (Δ ${Math.round(panDist)})`);
+  await sleep(1500);
+  const postDrag = await page.evaluate(() => ({ x: window.__ta3swim.x, z: window.__ta3swim.z }));
+  const swum = Math.hypot(postDrag.x - preDrag.x, postDrag.z - preDrag.z);
+  ok(swum > 1.5, `Drag führt den Körper (Δ ${swum.toFixed(2)} 3D-Einheiten)`);
 
-  // 3) Formation-Klick (Navigator-Label ist DOM; die 3D-Formation: Klick auf die
-  //    projizierte Mitte) darf kein zusätzliches Wasser-Segeln auslösen
-  const navPos = await page.evaluate(() => {
-    const p = window.__ta3proj.labels.get("navigator");
-    return p && p.visible ? { sx: p.sx, sy: p.sy } : null;
+  // 3) Formations-Klick segelt zur Formation (DOM-Klick auf das projizierte Label;
+  //    die Szene steht in 3D wegen des Kamera-Schwebens nie „stabil" — daher direkter DOM-Klick)
+  await sleep(2000);
+  await page.evaluate(() => {
+    const b = document.querySelector('button[aria-label="Orientierung: Symptom-Navigator ansegeln"]');
+    b?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
-  if (navPos) {
-    await page.mouse.click(navPos.sx, navPos.sy + 10);
-    await sleep(400);
-    const s = await page.evaluate(() => ({ sailing: window.__ta3ocean().sailing, cam: { ...window.__ta3ocean().camTarget } }));
-    // Formation-Klick startet Segelfahrt AUF die Formation (kein Wasser-Punkt dahinter)
-    ok(s.sailing === true, "Formations-Klick segelt zur Formation (nicht ins Wasser dahinter)");
-  }
+  await sleep(400);
+  // Ankunft kann bei kurzer Distanz sofort durch sein: sailing ODER geöffnetes Kapitel zählt
+  const s = await page.evaluate(() => ({ sailing: window.__ta3ocean().sailing, view: window.__ta3ocean().view }));
+  ok(s.sailing === true || s.view === "navigator", `Formations-Klick segelt zur Formation (sailing=${s.sailing}, view=${s.view})`);
+  // zurück ans Meer für spätere Checks
+  await page.keyboard.press("Escape");
+  await sleep(600);
 
   console.log(errors.length ? `KONSOLENFEHLER:\n${[...new Set(errors)].slice(0, 8).join("\n")}` : "0 Konsolenfehler");
   ok(errors.length === 0, "0 Konsolenfehler");

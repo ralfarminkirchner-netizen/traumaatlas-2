@@ -139,6 +139,40 @@ try {
       await page.screenshot({ path: `${SHOTS}/body-off.png` });
     }
 
+    if (scenario === "swim") {
+      // Zeiger führt den Körper: diagonal über das Bild gleiten
+      await page.mouse.move(380, 620);
+      for (let i = 0; i < 24; i++) await page.mouse.move(380 + i * 24, 620 - i * 9, { steps: 2 });
+      await sleep(600);
+      await page.screenshot({ path: `${SHOTS}/swim-moving.png` });
+      await sleep(2400);
+      await page.screenshot({ path: `${SHOTS}/swim-rest.png` });
+    }
+
+    if (scenario === "feld" || scenario === "annehmen") {
+      // kontrollierte Feld-Szene: Sog-Paar (Leere) + Barriere (Panik) um den Schwimmer
+      await page.evaluate(async (openCard) => {
+        const world = await import("/src/ocean/world.ts");
+        const co = await import("/src/ocean3d/coords.ts");
+        for (const p of [...window.__ta3ocean().phenomena]) world.removePhenomenon(p.id);
+        const a = world.addPhenomenon("Ich fühle eine tiefe innere Leere und Hoffnungslosigkeit");
+        const b = world.addPhenomenon("Ich fühle eine tiefe innere Leere und Hoffnungslosigkeit");
+        const c = world.addPhenomenon("Ich habe Panikattacken mit Herzrasen");
+        a.x = co.x2w(-5); a.y = co.z2w(-1); a.vx = a.vy = 0;
+        b.x = co.x2w(-10); b.y = co.z2w(4); b.vx = b.vy = 0;
+        c.x = co.x2w(7); c.y = co.z2w(-4); c.vx = c.vy = 0;
+        window.__ta3swim.x = 1.5; window.__ta3swim.z = 0;
+        window.__ta3swim.vx = 0; window.__ta3swim.vz = 0;
+        if (openCard) {
+          world.selectPhenomenon(a.id); // Begegnung öffnet die Lesefläche, Körper wächst
+        } else {
+          world.selectPhenomenon(null);
+        }
+      }, scenario === "annehmen");
+      await sleep(scenario === "feld" ? 1600 : 2200);
+      await page.screenshot({ path: `${SHOTS}/${scenario}.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);

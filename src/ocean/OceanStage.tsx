@@ -6,7 +6,8 @@ import {
   ISLANDS, WORLD, islandById, useOcean,
   stepCamera, stepPhysics, setCamTarget, toggleOverview, sailTo, arrive, openView,
   addPhenomenon, removePhenomenon, confirmBridge, selectPhenomenon,
-  calmPulse, setLexikonDoorGlowing, stageOf, STAGES,
+  calmPulse, setLexikonDoorGlowing, stageOf, STAGES, followCamDeadzone,
+  releaseArm, drawTogether, reorderLink,
   type IslandId, MIN_ZOOM, MAX_ZOOM,
 } from "./world";
 import { waterSplat, setWaterCalm, isFluidActive } from "./WaterCanvas";
@@ -16,6 +17,8 @@ import { webgl2Available } from "@/hooks/use-webgl";
 import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
 import { splat3D, projStore, screenToWater } from "../ocean3d/projStore";
+import { swimmer } from "../ocean3d/swimmer";
+import { w2x, w2z, x2w, z2w } from "../ocean3d/coords";
 import { seaBefund } from "@/kinformer/seaBefund";
 
 // ── Welt-Schicht-Transform ───────────────────────────────────────────────────
@@ -260,7 +263,7 @@ function PhenomenaLayer() {
 // ── Detail-Popover eines Phänomens ───────────────────────────────────────────
 
 function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
-  const { phenomena, selected, cam } = useOcean();
+  const { phenomena, selected, cam, arms } = useOcean();
   const p = phenomena.find((x) => x.id === selected);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -325,22 +328,45 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
           {p.links.map((l) => {
             const key = `${l.targetType}:${l.targetId}`;
             const isConfirmed = p.confirmed.includes(key);
+            const canSort = swimmer.level >= 1;
             return (
               <li key={key} className="rounded-lg border border-white/[0.07] bg-white/[0.03] p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[13px] leading-snug text-[#ede4d4]/90">{l.label}</span>
-                  {!isConfirmed ? (
-                    <button
-                      type="button"
-                      onClick={() => confirmBridge(p.id, l.targetType, l.targetId)}
-                      className="shrink-0 rounded-md border border-dashed border-[#9fd8cf]/50 px-2 py-1 text-[10px] uppercase tracking-wider text-[#9fd8cf] hover:bg-[#9fd8cf]/10"
-                      title={l.reason}
-                    >
-                      Brücke öffnen
-                    </button>
-                  ) : (
-                    <span className="shrink-0 text-[10px] uppercase tracking-wider text-[#e8c9a0]">verbunden</span>
-                  )}
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    {canSort && (
+                      <span className="flex flex-col" aria-label="Brücke umsortieren">
+                        <button
+                          type="button"
+                          onClick={() => reorderLink(p.id, key, -1)}
+                          className="px-1 text-[10px] leading-none text-white/40 hover:text-white/80"
+                          aria-label="Brücke nach oben"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => reorderLink(p.id, key, 1)}
+                          className="px-1 text-[10px] leading-none text-white/40 hover:text-white/80"
+                          aria-label="Brücke nach unten"
+                        >
+                          ▼
+                        </button>
+                      </span>
+                    )}
+                    {!isConfirmed ? (
+                      <button
+                        type="button"
+                        onClick={() => confirmBridge(p.id, l.targetType, l.targetId)}
+                        className="shrink-0 rounded-md border border-dashed border-[#9fd8cf]/50 px-2 py-1 text-[10px] uppercase tracking-wider text-[#9fd8cf] hover:bg-[#9fd8cf]/10"
+                        title={l.reason}
+                      >
+                        Brücke öffnen
+                      </button>
+                    ) : (
+                      <span className="shrink-0 text-[10px] uppercase tracking-wider text-[#e8c9a0]">verbunden</span>
+                    )}
+                  </span>
                 </div>
                 <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/10">
                   <div className="h-full rounded-full bg-[#e2b35c]" style={{ width: `${Math.round(l.strength * 100)}%` }} />
@@ -359,6 +385,60 @@ function PhenomenonCard({ mode3d = false }: { mode3d?: boolean }) {
       )}
 
       <SeaBefundBlock />
+
+      {/* Arme führen — mit Wachstum freigeschaltet (Größer = veränderbarer) */}
+      {(() => {
+        const mine = arms.filter((a) => a.a === p.id || a.b === p.id);
+        if (swimmer.level < 1) {
+          return (
+            <p className="mt-3 text-[10px] leading-relaxed text-white/30">
+              Nimm Phänomene an, und dein Körper wächst — dann kannst du Arme lösen,
+              Phänomene zusammenführen und Brücken ordnen.
+            </p>
+          );
+        }
+        if (mine.length === 0) return null;
+        return (
+          <div className="mt-3 space-y-1.5" data-testid="arm-actions">
+            <p className="text-[9px] uppercase tracking-[0.28em] text-white/35">Arme dieses Phänomens</p>
+            {mine.map((a) => {
+              const otherId = a.a === p.id ? a.b : a.a;
+              const other = phenomena.find((x) => x.id === otherId);
+              if (!other) return null;
+              const repel = a.strength < 0;
+              return (
+                <div
+                  key={`${a.a}-${a.b}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2.5 py-2"
+                >
+                  <span className="min-w-0 flex-1 truncate text-[11px] text-white/55" title={a.reason}>
+                    {repel ? "↔" : "—"} „{other.label.length > 22 ? other.label.slice(0, 20) + "…" : other.label}"
+                    {a.latched && <span className="text-[#e8c9a0]/70"> · verhakt</span>}
+                  </span>
+                  <span className="flex shrink-0 gap-1.5">
+                    {!repel && (
+                      <button
+                        type="button"
+                        onClick={() => drawTogether(p.id, otherId)}
+                        className="rounded-md border border-[#9fd8cf]/40 px-2 py-0.5 text-[10px] uppercase tracking-wider text-[#9fd8cf] hover:bg-[#9fd8cf]/10"
+                      >
+                        Zusammenführen
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => releaseArm(a.a, a.b)}
+                      className="rounded-md border border-white/15 px-2 py-0.5 text-[10px] uppercase tracking-wider text-white/50 hover:bg-white/[0.06] hover:text-white/80"
+                    >
+                      Lösen
+                    </button>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
 
       <div className="mt-4 flex items-center justify-between">
         <button
@@ -517,8 +597,8 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
   return (
     <div className="pointer-events-none absolute inset-x-0 top-16 z-30 flex items-start justify-between px-4 sm:top-4 sm:px-6">
       <div className="pointer-events-auto">
-        <p className="text-[10px] uppercase tracking-[0.32em] text-[#e8c9a0]/60">TRAUMAATLAS 3</p>
-        <p className="font-display text-lg text-[#ede4d4]/90">Das Meer der Phänomene</p>
+        <p className="text-[10px] uppercase tracking-[0.32em] text-[#e8c9a0]/60">TRAUMAATLAS 4</p>
+        <p className="font-display text-lg text-[#ede4d4]/90">Der Schwimmer im Meer der Phänomene</p>
         {/* stilles Wachstum — Lesart: Licht, kein Punktestand */}
         <div className="mt-2 flex items-center gap-2" role="status" aria-label={`Stufe: ${STAGES[stage]}`}>
           <span className="relative flex h-2.5 w-2.5">
@@ -526,6 +606,22 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#e8c9a0]" style={{ opacity: 0.5 + stage * 0.17 }} />
           </span>
           <span className="text-[11px] tracking-[0.2em] text-white/45">{STAGES[stage]}</span>
+        </div>
+        {/* Präsenz des Schwimmers — wächst mit jeder angenommenen Begegnung */}
+        <div className="mt-1 flex items-center gap-1.5" role="status" aria-label={`Präsenz: Stufe ${swimmer.level}`}>
+          {Array.from({ length: Math.min(8, swimmer.level + 1) }).map((_, i) => (
+            <span
+              key={i}
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{
+                background: i < swimmer.level ? "#e8c9a0" : "rgba(255,255,255,0.18)",
+                boxShadow: i < swimmer.level ? "0 0 6px rgba(232,201,160,0.7)" : "none",
+              }}
+            />
+          ))}
+          <span className="text-[10px] tracking-[0.2em] text-white/30">
+            {["Funke", "Körper", "Strömung", "Woge", "Ozean"][Math.min(4, Math.floor(swimmer.level / 2))]}
+          </span>
         </div>
         {/* was als Nächstes wächst — konkret, ohne Punktejagd */}
         {stage < 3 && (
@@ -611,6 +707,12 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
 
       stepPhysics(dt);
       const settled = stepCamera(dt);
+
+      // Kamera folgt dem Schwimmer mit Totzone (Segeln/Kapitel/Karte/Drag haben Vorrang)
+      if (use3D && !ocean.sailing && !ocean.view && !ocean.overview && !projStore.dragging) {
+        const rect = stageRef.current?.getBoundingClientRect();
+        if (rect) followCamDeadzone(x2w(swimmer.x), z2w(swimmer.z), rect.width, rect.height);
+      }
 
       // Ankunft → Kapitel öffnen
       if (pendingIsland.current && settled) {
@@ -714,10 +816,16 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         const { u, v } = toUv(e.clientX, e.clientY);
         const { wx, wy } = toWorld(e.clientX, e.clientY);
         p.px = wx; p.py = wy;
+        // Zeiger-Brücke für den Schwimmer (Zeiger = Führung)
+        projStore.pointer.cx = e.clientX;
+        projStore.pointer.cy = e.clientY;
+        projStore.pointer.t = now;
+        projStore.pointer.alive = true;
 
         if (p.down) {
           if (Math.hypot(e.clientX - p.sx, e.clientY - p.sy) > 6) p.moved = true;
-          if (p.moved && !ocean.view) {
+          // Drag-Pan nur im Legacy-2D-Pfad — in 3D führt der Zeiger den Körper
+          if (p.moved && !ocean.view && !use3D) {
             projStore.dragging = true;
             const c = ocean.cam;
             setCamTarget({ x: c.x - dx / c.zoom, y: c.y - dy / c.zoom });
@@ -741,7 +849,10 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         pointer.current.down = false;
         projStore.dragging = false;
       },
-      // Klick aufs offene Wasser (3D): gezielt dorthin segeln — direkte Kontrolle
+      onPointerLeave: () => {
+        projStore.pointer.alive = false;
+      },
+      // Klick aufs offene Wasser (3D): Schwimm-Ziel — Zeiger-Führung schlägt es sofort
       onClick: (e: React.MouseEvent) => {
         if (!use3D || ocean.view) return;
         const p = pointer.current;
@@ -751,7 +862,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         if (t.closest('[role="dialog"]') || t.closest("button") || t.closest("input") || t.closest("select") || t.closest("form")) return;
         const w = screenToWater(e.clientX, e.clientY);
         if (w) {
-          setCamTarget({ x: w.wx, y: w.wy });
+          swimmer.swimTarget = { x: w2x(w.wx), z: w2z(w.wy) };
           splat3D(w.wx, w.wy, 0.9);
         }
       },
@@ -779,6 +890,9 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
     selectPhenomenon(null);
     pendingIsland.current = id;
     sailTo(id);
+    // der Körper schwimmt mit zur Formation
+    const isl = islandById.get(id);
+    if (isl) swimmer.swimTarget = { x: w2x(isl.x), z: w2z(isl.y) };
     onSail(id);
   };
 
@@ -804,6 +918,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       onPointerDown={handlers.onPointerDown}
       onPointerMove={handlers.onPointerMove}
       onPointerUp={handlers.onPointerUp}
+      onPointerLeave={handlers.onPointerLeave}
       onClick={handlers.onClick}
       onWheel={handlers.onWheel}
       role="application"

@@ -21,6 +21,8 @@ export const projStore = {
   hitAt: 0,
   /** Zeiger zieht gerade die Welt (Drag-Pan) — Kamera folgt dann direkter */
   dragging: false,
+  /** Zeigerposition (Client-px) + Zeitpunkt — der Schwimmer folgt diesem Punkt */
+  pointer: { cx: 0, cy: 0, t: 0, alive: false },
 };
 
 // ── Ringwellen-Brücke: OceanStage meldet Wasser-Kontakte ─────

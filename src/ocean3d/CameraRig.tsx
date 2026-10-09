@@ -9,6 +9,7 @@ import { getOceanState } from "../ocean/world";
 import { w2x, w2z } from "./coords";
 import { waveHeight } from "./waves";
 import { projStore } from "./projStore";
+import { swimmer } from "./swimmer";
 
 const _pos = new THREE.Vector3();
 const _look = new THREE.Vector3();
@@ -29,12 +30,15 @@ export function CameraRig() {
     const tx = w2x(s.cam.x);
     const tz = w2z(s.cam.y);
 
-    // Übersichts-Faktor: 0 = nah/segeln, 1 = hohe Karte
+    // Übersichts-Faktor: 0 = nah/schwimmen, 1 = hohe Karte
     const ovF = THREE.MathUtils.clamp((0.62 - s.cam.zoom) / 0.4, 0, 1);
 
-    // niedrig über dem Wasser beim Segeln (Horizont sichtbar), steil in der Karte
-    const h = 2.8 + 53 * Math.pow(ovF, 2.0);
-    const pitch = THREE.MathUtils.degToRad(THREE.MathUtils.lerp(12, 65, Math.pow(ovF, 1.5)));
+    // Wachstum weitet den Blick leicht (mehr Welt bei mehr Größe)
+    const widen = 1 + 0.07 * Math.sqrt(swimmer.level);
+
+    // Top-Down-Iso: von oben, leicht geneigt — der Körper liegt unter dem Zeiger
+    const h = (3.8 + 52 * Math.pow(ovF, 2.0)) * widen;
+    const pitch = THREE.MathUtils.degToRad(THREE.MathUtils.lerp(31, 68, Math.pow(ovF, 1.5)));
     const dist = h / Math.tan(pitch);
     const fov = THREE.MathUtils.lerp(50, 60, ovF);
 
