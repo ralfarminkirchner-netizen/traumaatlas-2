@@ -139,8 +139,15 @@ void main() {
   // mehr sauber auflöst. pfj (Jacobi) treibt unten das Weißkapsel-Band.
   vec2 pfgrad;
   float pfj, pfenv, pfdisp;
-  packetHeight(vWorldPos.xz, pfgrad, pfj, pfenv, pfdisp);
+  float pfh = packetHeight(vWorldPos.xz, pfgrad, pfj, pfenv, pfdisp);
   N = normalize(vec3(N.x - pfgrad.x * 0.85, N.y, N.z - pfgrad.y * 0.85));
+
+  // Normierte Trägerphase innerhalb der Hüllkurve: +1 am Kamm, −1 in der Mulde.
+  // Daraus das schmale Kamm-Band (Glanz) und die eigene Mulde (Caustic).
+  float pAmp = uPackB.x;
+  float phN = pfh / max(pAmp * pfenv, 1e-4);
+  float crestBand = smoothstep(0.55, 0.92, phN) * pfenv;
+  float troughBand = smoothstep(-0.5, -0.9, phN) * pfenv;
   // Fresnel (Schlick)
   float f = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
 
@@ -175,6 +182,20 @@ void main() {
   float spec = pow(dh, 1400.0) * (0.45 + 0.95 * sparkle);
   spec += pow(dh, 110.0) * 0.10;
   col += uMoonColor * spec;
+
+  // ── Glanz-Band des Selbst: schmales Fresnel-Glint entlang des eigenen ──
+  // Kamms — mondgetrieben (uMoonDir/uMoonColor), an flachen Blickwinkeln
+  // stärker. Enge Phase (Band²) + enger Spec-Kern (260) + feiner Saum (42):
+  // eine helle Linie am Kamm, kein Fleck. Signatur des Selbst, ohne Körper.
+  float glintBand = smoothstep(0.68, 0.95, phN) * pfenv;
+  float glint = glintBand * glintBand * (0.45 + 0.55 * f) * (0.7 + 0.6 * sparkle);
+  col += uMoonColor * glint * (pow(dh, 260.0) * 1.35 + pow(dh, 42.0) * 0.10);
+
+  // Eigene Mulde: leichte Caustic-Aufhellung — zwei gegenläufige Noise-
+  // Oktaven lesen wie ein ruhig atmendes Lichtnetz im Wellental, nie grell.
+  float caustic = vnoise(vWorldPos.xz * 3.1 + uTime * 0.22) * vnoise(vWorldPos.xz * 4.6 - uTime * 0.16);
+  caustic = pow(caustic * 1.85, 2.3);
+  col += mix(uShallowColor, uMoonColor, 0.25) * troughBand * caustic * 0.18;
   // Übersichts-Sheen: weiche Mondbahn — nur in Blickrichtung des Mondes
   float dhBroad = max(dot(normalize(vNormal), H), 0.0);
   vec2 viewAz = normalize(vWorldPos.xz - cameraPosition.xz + vec2(1e-4));
@@ -206,9 +227,11 @@ void main() {
   col += min(field, vec3(1.6)) * (0.5 + 0.5 * crestLift) * (0.6 + 0.4 * shim);
 
   // Kamm-Gischt + Ringwellen-Gischt + Paket-Brechung (Jacobi, fragment-genau)
+  // + feine Schaumspitze auf dem eigenen Kamm, sobald das Paket Tempo trägt
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
   float packFoam = smoothstep(0.66, 0.30, pfj);
-  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN));
+  float crestFoam = crestBand * crestBand * smoothstep(0.42, 0.8, pAmp) * (0.4 + 0.6 * foamN);
+  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.55);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
 
   gl_FragColor = vec4(col, 1.0);
