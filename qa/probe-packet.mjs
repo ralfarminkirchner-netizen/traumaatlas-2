@@ -14,6 +14,9 @@ const server = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--port
   cwd: new URL("..", import.meta.url).pathname, stdio: ["ignore", "pipe", "pipe"],
 });
 server.stdout.pipe(log); server.stderr.pipe(log);
+// Port schon von einem warmen Server bedient (TA3_QA_PORT-Muster)? Dann
+// nicht abstürzen — waitForServer findet den laufenden Server selbst.
+server.on("error", () => { /* EADDRINUSE o.ä.: warmer Server dient weiter */ });
 const kill = () => { try { server.kill("SIGTERM"); } catch { /* ok */ } };
 process.on("exit", kill);
 process.on("SIGINT", () => { kill(); process.exit(130); });

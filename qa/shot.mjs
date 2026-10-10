@@ -22,6 +22,9 @@ const server = spawn(
 );
 server.stdout.pipe(log);
 server.stderr.pipe(log);
+// Port schon von einem warmen Server bedient (TA3_QA_PORT-Muster)? Dann
+// nicht abstürzen — waitForServer findet den laufenden Server selbst.
+server.on("error", () => { /* EADDRINUSE o.ä.: warmer Server dient weiter */ });
 
 const kill = () => { try { server.kill("SIGTERM"); } catch { /* ok */ } };
 process.on("exit", kill);
@@ -266,14 +269,14 @@ try {
         // Kamera schaut im Zeiger-Modus nach Norden (−z): Pakete NÖRDLICH
         const pk = window.__ta3pack;
         pk.pinned = true;
-        pk.x = -3.2; pk.z = 21;
+        pk.x = -5.0; pk.z = 21;
         pk.dirX = 1; pk.dirZ = 0;
-        pk.energy = 300; pk.amp = 0.68; pk.active = 1;
+        pk.energy = 330; pk.amp = 0.75; pk.active = 1;
         const p2 = window.__ta3pack2;
         p2.pinned = true;
-        p2.x = 3.2; p2.z = 21;
+        p2.x = 5.0; p2.z = 21;
         p2.dirX = 0; p2.dirZ = 1;
-        p2.energy = 300; p2.amp = 0.68; p2.active = 1;
+        p2.energy = 330; p2.amp = 0.75; p2.active = 1;
       });
       await sleep(1800);
       const schliessen = page.getByRole("button", { name: "Schließen" });
