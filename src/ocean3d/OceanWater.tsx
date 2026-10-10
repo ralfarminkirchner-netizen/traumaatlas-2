@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, bodyState } from "./waves";
+import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKET_PROFILE, bodyState, packetState, packetOmega } from "./waves";
 import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
@@ -18,6 +18,7 @@ const VERT = /* glsl */ `
 ${GERSTNER_GLSL}
 ${RIPPLE_GLSL}
 ${BODY_GLSL}
+${PACKET_GLSL}
 
 uniform mat4 uTextureMatrix;
 
@@ -43,6 +44,18 @@ void main() {
   float bh = bodyHeight(position.xz, bgrad);
   p.y += bh;
   nrm = normalize(vec3(nrm.x - bgrad.x, nrm.y, nrm.z - bgrad.y));
+
+  // Das Wellenpaket (das Selbst): laufende gerichtete Welle über allem.
+  // Horizontale Verdrängung schärft die Kämme; die Jacobi-Determinante des
+  // Pakets treibt ab der Steilheitsschwelle das Weißkapsel-Band (Brechen).
+  vec2 pgrad;
+  float pj, penv, pdisp;
+  float ph = packetHeight(position.xz, pgrad, pj, penv, pdisp);
+  p.y += ph;
+  p.x += pdisp * uPackA.z;
+  p.z += pdisp * uPackA.w;
+  nrm = normalize(vec3(nrm.x - pgrad.x, nrm.y, nrm.z - pgrad.y));
+  crest = max(crest, smoothstep(0.62, 0.30, pj));
 
   vWorldPos = p;
   vNormal = nrm;
@@ -73,6 +86,8 @@ uniform vec3 uPoolColor[10];
 uniform vec4 uBuoys[14];    // x, z, radius, intensität (pro Frame)
 uniform vec3 uBuoyColor[14];
 uniform int uBuoyCount;
+
+${PACKET_GLSL}
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -119,6 +134,13 @@ void main() {
     vNormal.z - (g1.y * 0.17 + g2.y * 0.075) * detFade
   ));
 
+  // Das Wellenpaket (das Selbst): fragment-genauer Normalen-Beitrag — die
+  // Kämme lesen sich auch dort, wo das Vertex-Gitter die Trägerwelle nicht
+  // mehr sauber auflöst. pfj (Jacobi) treibt unten das Weißkapsel-Band.
+  vec2 pfgrad;
+  float pfj, pfenv, pfdisp;
+  packetHeight(vWorldPos.xz, pfgrad, pfj, pfenv, pfdisp);
+  N = normalize(vec3(N.x - pfgrad.x * 0.85, N.y, N.z - pfgrad.y * 0.85));
   // Fresnel (Schlick)
   float f = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
 
@@ -140,6 +162,11 @@ void main() {
   // Reflexions-Basis niedrig: aus der Höhe kein heller Horizont-Wash.
   vec3 col = mix(waterBody, refl, clamp(f * 1.25 + 0.15, 0.0, 1.0) * reflMask);
   col += vec3(0.045, 0.07, 0.11) * (1.0 - f) * 0.55;
+
+  // Die Welle trägt ein leises Eigenlicht: die Hüllkurve hebt den Wasserkörper
+  // minimal an — die Schattflanke kippt nie zur schwarzen Schneise, und man
+  // sieht immer, wo man ist (wie den Finger auf dem Touchscreen).
+  col += uShallowColor * pfenv * 0.12;
 
   // Mondspekular + Glitzerpfad
   vec3 H = normalize(V + uMoonDir);
@@ -178,9 +205,10 @@ void main() {
   float crestLift = clamp(vWorldPos.y * 1.5 + 0.55, 0.0, 1.0);
   col += min(field, vec3(1.6)) * (0.5 + 0.5 * crestLift) * (0.6 + 0.4 * shim);
 
-  // Kamm-Gischt + Ringwellen-Gischt
+  // Kamm-Gischt + Ringwellen-Gischt + Paket-Brechung (Jacobi, fragment-genau)
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
-  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN));
+  float packFoam = smoothstep(0.66, 0.30, pfj);
+  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN));
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
 
   gl_FragColor = vec4(col, 1.0);
@@ -334,6 +362,9 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uBuoyCount: { value: 0 },
           uRipples: { value: ripples },
           uBody: { value: new THREE.Vector4(0, 0, 1, 0) },
+          uPackA: { value: new THREE.Vector4(0, 0, 0, -1) },
+          uPackB: { value: new THREE.Vector4(0, 1, PACKET_PROFILE.SIGMA_U, PACKET_PROFILE.SIGMA_V) },
+          uPackC: { value: new THREE.Vector2(packetOmega(), PACKET_PROFILE.Q) },
         },
       ]),
     });
@@ -350,6 +381,11 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
       Math.max(256, Math.floor(size.height * dpr * rtScale)),
     );
   }, [rt, size, dpr, rtScale]);
+
+  // QA-/Debug-Spiegel: Uniforms am Window lesbar (Probes, shot.mjs)
+  useEffect(() => {
+    (window as unknown as { __ta3waterU?: typeof material.uniforms }).__ta3waterU = material.uniforms;
+  }, [material]);
 
   // Ringwellen-API aus projStore bedienen (Weltkoordinaten → 3D-Ebene)
   const rippleIdx = useRef(0);
@@ -372,6 +408,19 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     // Schwimmer-Druckfeld: Körperzustand → Uniform (weich ein-/ausgeblendet über w)
     const uB = mat.uniforms.uBody.value as THREE.Vector4;
     uB.set(bodyState.x, bodyState.z, Math.max(bodyState.r, 0.001), bodyState.strength * bodyState.active);
+
+    // Wellenpaket: Zustand → Uniforms (Shader ≡ CPU in waves.ts)
+    const uPA = mat.uniforms.uPackA.value as THREE.Vector4;
+    uPA.set(packetState.x, packetState.z, packetState.dirX, packetState.dirZ);
+    const uPB = mat.uniforms.uPackB.value as THREE.Vector4;
+    uPB.set(
+      packetState.amp * packetState.active,
+      (2 * Math.PI) / packetState.len,
+      packetState.sigmaU,
+      packetState.sigmaV,
+    );
+    const uPC = mat.uniforms.uPackC.value as THREE.Vector2;
+    uPC.set(packetOmega(packetState.len), PACKET_PROFILE.Q);
 
     // Stille beruhigt die Wellen (weich gedämpft)
     const target = projStore.calm;

@@ -2,12 +2,13 @@
 // speichert Screenshots nach /tmp/ta3-shots/, beendet den Server wieder.
 // Aufruf: node qa/shot.mjs <szenario[,szenario...]>
 // Szenarien: idle | sail | overview | phen | island | mobile | rm
+// Port: 8471 (Default), per TA3_QA_PORT überschreibbar, falls belegt.
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { mkdirSync, createWriteStream } from "node:fs";
 
 const scenarios = (process.argv[2] || "idle").split(",");
-const PORT = 8471;
+const PORT = Number(process.env.TA3_QA_PORT || 8471);
 const BASE = `http://localhost:${PORT}/`;
 const SHOTS = "/tmp/ta3-shots";
 mkdirSync(SHOTS, { recursive: true });
@@ -206,6 +207,52 @@ try {
       await page.evaluate(() => { const sw = window.__ta3swim; sw.vy = 3.4; sw.air = true; });
       await sleep(330);
       await page.screenshot({ path: `${SHOTS}/sprung.png` });
+    }
+
+    if (scenario === "welle") {
+      // Starrer Paket-Sweep: Zeiger nicht bewegen — der Schwimmer bleibt,
+      // das gepinnte Paket läuft mit eigener Dispersion durchs Bild.
+      // Zuerst: ggf. offene Phänomen-Karte schließen (Meer frei, kein Backdrop)
+      await page.evaluate(async () => {
+        const world = await import("/src/ocean/world.ts");
+        world.selectPhenomenon(null);
+      });
+      await sleep(900);
+      // Kamera auf den Schwimmer holen: Zeiger einmal auf offenes Wasser legen
+      // (der Schwimmer springt dorthin, die Kamera folgt), dann Paket pinnen.
+      // (700, 260) = freie See — keine Bojen, keine Phänomene im Weg
+      await page.mouse.move(700, 260);
+      await sleep(1200);
+      // Teleport kann eine Begegnung streifen: Karte sicherheitshalber zu
+      await page.evaluate(async () => {
+        const world = await import("/src/ocean/world.ts");
+        world.selectPhenomenon(null);
+      });
+      await sleep(400);
+      // 1) Volle Fahrt-Energie: steile Welle, bricht am Kamm (3 Phasen)
+      await page.evaluate(() => {
+        const sw = window.__ta3swim;
+        sw.vx = 0; sw.vz = 0; sw.heading = Math.PI * 0.78;
+        const pk = window.__ta3pack;
+        pk.pinned = true;
+        pk.x = sw.x; pk.z = sw.z;
+        pk.dirX = Math.sin(sw.heading); pk.dirZ = -Math.cos(sw.heading);
+        pk.energy = 800; pk.amp = 1.15; pk.active = 1;
+      });
+      await sleep(500);
+      await page.screenshot({ path: `${SHOTS}/welle-voll-0.png` });
+      await sleep(1200);
+      await page.screenshot({ path: `${SHOTS}/welle-voll-1.png` });
+      await sleep(1200);
+      await page.screenshot({ path: `${SHOTS}/welle-voll-2.png` });
+      // 2) Sachtes Gleiten: niedrige, ruhige Welle — keine Brechung
+      await page.evaluate(() => { const pk = window.__ta3pack; pk.energy = 60; pk.amp = 0.35; });
+      await sleep(700);
+      await page.screenshot({ path: `${SHOTS}/welle-sacht.png` });
+      // 3) Gegenprobe: Paket aus → nur Druckfeld-Mulde bleibt
+      await page.evaluate(() => { window.__ta3pack.amp = 0; });
+      await sleep(600);
+      await page.screenshot({ path: `${SHOTS}/welle-aus.png` });
     }
 
     if (scenario === "island") {

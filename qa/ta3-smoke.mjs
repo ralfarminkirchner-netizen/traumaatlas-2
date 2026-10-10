@@ -3,14 +3,14 @@
 //        alle 10 Kapitel mit Screenshots, gezielte Interaktionen.
 // Run 2: reduced-motion — Meer statisch, Lexikon-Videos mit Controls.
 // Run 3: Mobile-Viewport — Meer + zwei Kapitel.
-// Startet den Dev-Server selbst (Port 8471) und räumt auf.
+// Startet den Dev-Server selbst (Port 8471; per TA3_QA_PORT überschreibbar) und räumt auf.
 // Aufruf: node qa/ta3-smoke.mjs [desktop|rm|mobile] (ohne Arg = alle)
 // Exit 1 bei Konsolenfehlern oder fehlgeschlagenen Checks.
 import { spawn } from "node:child_process";
 import { chromium } from "playwright";
 import { mkdirSync, createWriteStream } from "node:fs";
 
-const PORT = 8471;
+const PORT = Number(process.env.TA3_QA_PORT || 8471);
 const BASE = `http://localhost:${PORT}/`;
 const SHOTS = "/tmp/ta3-qa";
 mkdirSync(SHOTS, { recursive: true });

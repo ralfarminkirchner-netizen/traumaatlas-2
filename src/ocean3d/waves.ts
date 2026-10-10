@@ -154,6 +154,149 @@ if (typeof window !== "undefined") {
   (window as unknown as { __ta3body?: typeof bodyState }).__ta3body = bodyState;
 }
 
+// ── Das Wellenpaket (das Selbst) ─────────────────────────────────────────────
+// Gerichtetes Gauß-Paket als laufende Welle: Gauß-Hüllkurve (entlang σu, quer
+// σv) × Trägerwelle sin(k·u − ω·t) mit Tiefwasser-Dispersion ω = √(g·k) — die
+// Kämme laufen mit Phasengeschwindigkeit durchs Paket (c = 2·c_gruppe), kein
+// statischer Tropf. Horizontale Verdrängung Gerstner-artig entlang der
+// Richtung → Jacobi-Determinante als Brech-Kriterium (Steilheitsschwelle).
+// CPU- und GPU-Seite MÜSSEN deckungsgleich bleiben (PACKET_GLSL spiegelt
+// wavePacket). Das Körper-Druckfeld (BODY_GLSL) bleibt als Mulde darunter.
+
+export const PACKET_PROFILE = {
+  /** Wellenlänge der Trägerwelle (Welteinheiten) — ≥ 4 Vertices pro Periode */
+  LEN: 10.0,
+  /** Hüllkurven-Breite entlang der Fahrtrichtung (kurzer Wellenzug) */
+  SIGMA_U: 7.6,
+  /** Hüllkurven-Breite quer (die Kammlinie trägt seitlich aus) */
+  SIGMA_V: 11.0,
+  /** Steilheitsparameter der Horizontalverdrängung (Jacobi; < 1/(k·A_max) = 1.18) */
+  Q: 1.05,
+  /** eigene Zeitdehnung — lebendiger als das Meer (0.16), würdevoller als echt */
+  DILATION: 0.55,
+  /** Amplituden-Gewinn: A = GAIN · √(2E), E = ½v² → A ∝ v */
+  GAIN: 0.03,
+  /** Würde-Deckel: nie Monsterwelle */
+  MAX_AMP: 1.35,
+  /** Aufladerate des Energie-Reservoirs (1/s) — schnelle Antwort auf Zeiger */
+  FILL: 6.0,
+  /** Zerfallsrate beim Abbremsen (1/s) — die Welle läuft aus, nicht abrupt aus */
+  DECAY: 1.1,
+  /** Jacobi-Schwelle: darunter bricht die Welle (Weißkapsel + Gischt) */
+  BREAK_J: 0.42,
+} as const;
+
+/**
+ * Paketzustand auf der 3D-Ebene. energy = Reservoir (∝ v²), amp folgt √(2E).
+ * pinned = QA-Modus: stepPacket rührt nichts an (starrer Test-Sweep).
+ */
+export const packetState = {
+  x: 6,
+  z: 5,
+  dirX: 0,
+  dirZ: -1,
+  energy: 0,
+  amp: 0,
+  len: PACKET_PROFILE.LEN,
+  sigmaU: PACKET_PROFILE.SIGMA_U,
+  sigmaV: PACKET_PROFILE.SIGMA_V,
+  active: 0,
+  pinned: false,
+  /** QA-Zähler: kumulativ abgegebene Energie (Ringwellen-Train beim Abbremsen) */
+  shedTotal: 0,
+};
+
+/** Kreisfrequenz der Trägerwelle: Tiefwasser-Dispersion ω = √(g·k), gedehnt. */
+export function packetOmega(len = packetState.len): number {
+  return angularFreq(len) * PACKET_PROFILE.DILATION;
+}
+
+export interface PacketSample {
+  h: number;
+  gx: number;
+  gz: number;
+  /** Jacobi-Determinante der Horizontalverdrängung (1 = ungestört, ≤ BREAK_J = bricht) */
+  j: number;
+  /** Hüllkurvenwert 0..1 (für Glanz/Gischt-Masken) */
+  env: number;
+  /** horizontale Verdrängung entlang der Richtung (Scheitel-Schrägstellung) */
+  disp: number;
+}
+
+/** Paket-Abtastung an (x,z) zur Zeit t — deckungsgleich mit packetHeight() im Shader. */
+export function wavePacket(x: number, z: number, t: number): PacketSample {
+  const A = packetState.amp * packetState.active;
+  if (A <= 1e-5) return { h: 0, gx: 0, gz: 0, j: 1, env: 0, disp: 0 };
+  const dx = x - packetState.x;
+  const dz = z - packetState.z;
+  const ux = packetState.dirX;
+  const uz = packetState.dirZ;
+  const px = -uz;
+  const pz = ux;
+  const u = ux * dx + uz * dz;
+  const v = px * dx + pz * dz;
+  const su = Math.max(packetState.sigmaU, 0.3);
+  const sv = Math.max(packetState.sigmaV, 0.3);
+  const eu = (-2 * u) / (su * su);
+  const ev = (-2 * v) / (sv * sv);
+  const env = Math.exp(-(u * u) / (su * su) - (v * v) / (sv * sv));
+  const k = (2 * Math.PI) / packetState.len;
+  const w = packetOmega(packetState.len);
+  const phi = k * u - w * t;
+  const s = Math.sin(phi);
+  const c = Math.cos(phi);
+  const h = A * env * s;
+  // Höhengradient: ∂h/∂xz = A·(∇env·sinφ + env·cosφ·k·dir)
+  const denvx = env * (eu * ux + ev * px);
+  const denvz = env * (eu * uz + ev * pz);
+  const gx = A * (denvx * s + env * c * k * ux);
+  const gz = A * (denvz * s + env * c * k * uz);
+  // Horizontale Verdrängung D·dir (Gerstner-artig): J = 1 + ∂D/∂u
+  const disp = PACKET_PROFILE.Q * A * env * c;
+  const j = 1 + PACKET_PROFILE.Q * A * env * (eu * c - k * s);
+  return { h, gx, gz, j, env, disp };
+}
+
+/** GLSL: Uniforms + Funktion, exakte Spiegelung der CPU-Mathematik oben. */
+export const PACKET_GLSL = /* glsl */ `
+uniform vec4 uPackA; // x, z, dirX, dirZ
+uniform vec4 uPackB; // amp·aktiv, k, sigmaU, sigmaV
+uniform vec2 uPackC; // omega, q (Steilheit)
+
+// Laufendes gerichtetes Gauß-Wellenpaket (das Selbst).
+// Liefert Höhe; out: Höhengradient, Jacobi, Hüllkurve, horiz. Verdrängung.
+float packetHeight(vec2 xz, out vec2 grad, out float j, out float env, out float disp) {
+  grad = vec2(0.0); j = 1.0; env = 0.0; disp = 0.0;
+  float A = uPackB.x;
+  if (A <= 1e-5) return 0.0;
+  vec2 d = xz - uPackA.xy;
+  vec2 dir = uPackA.zw;
+  vec2 per = vec2(-dir.y, dir.x);
+  float u = dot(dir, d);
+  float v = dot(per, d);
+  float su = max(uPackB.z, 0.3);
+  float sv = max(uPackB.w, 0.3);
+  float eu = -2.0 * u / (su * su);
+  float ev = -2.0 * v / (sv * sv);
+  env = exp(-u * u / (su * su) - v * v / (sv * sv));
+  float k = uPackB.y;
+  float phi = k * u - uPackC.x * uTime;
+  float s = sin(phi);
+  float c = cos(phi);
+  float h = A * env * s;
+  vec2 denv = env * (eu * dir + ev * per);
+  grad = A * (denv * s + env * c * k * dir);
+  disp = uPackC.y * A * env * c;
+  j = 1.0 + uPackC.y * A * env * (eu * c - k * s);
+  return h;
+}
+`;
+
+// QA-/Debug-Spiegel: Paketzustand am Window lesbar/stellbar (Probes, shot.mjs)
+if (typeof window !== "undefined") {
+  (window as unknown as { __ta3pack?: typeof packetState }).__ta3pack = packetState;
+}
+
 // ── GLSL ─────────────────────────────────────────────────────────────────────
 
 export const GERSTNER_COUNT = GERSTNER.length;

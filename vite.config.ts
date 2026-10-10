@@ -9,6 +9,11 @@ export default defineConfig({
   plugins: [inspectAttr(), react()],
   server: {
     port: 3000,
+    fs: {
+      // node_modules ist ein Symlink auf ../traumaatlas-4/node_modules —
+      // der Realpath liegt außerhalb der Wurzel (Fonts/Deps im Dev-Server)
+      allow: [".."],
+    },
   },
   preview: {
     // Railway-Domain + weitere Railway-Hosts zulassen (vite preview prüft Host-Header)

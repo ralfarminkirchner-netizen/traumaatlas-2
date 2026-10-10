@@ -9,7 +9,7 @@
 
 import { getOceanState, setOcean } from "../ocean/world";
 import { w2x, w2z } from "./coords";
-import { bodyState, waveHeight } from "./waves";
+import { bodyState, waveHeight, packetState, packetOmega, wavePacket, PACKET_PROFILE } from "./waves";
 import { projStore, screenToWater, splat3D } from "./projStore";
 import { x2w, z2w } from "./coords";
 
@@ -175,6 +175,75 @@ export interface SwimStepOut {
 
 let _prevH = 0;
 
+// ── Das Wellenpaket: Energie-Physik ──────────────────────────────────────────
+// E ∝ v²: das Reservoir lädt sich aus der Fahrgeschwindigkeit, die Amplitude
+// folgt physikalisch korrekt als A ∝ √(2E). Beim Abbremsen zerfällt das Paket
+// mit DECAY — die abgegebene Energie speist den Ringwellen-Train (Ripple-
+// System). Bricht die Welle (Jacobi < BREAK_J an der Steilflanke), sprüht
+// Gischt (Splat an der Kammposition).
+
+let _shedAcc = 0;
+let _lastRingT = -1e9;
+let _lastSprayT = -1e9;
+
+export function stepPacket(dt: number, t: number, speed: number, inactive: boolean) {
+  const pk = packetState;
+  if (pk.pinned) return; // QA: starrer Test-Sweep
+  const P = PACKET_PROFILE;
+
+  // Richtung nur aus echter Fahrt — im Stand nicht nachdrehen (wrap-sicher
+  // als Vektor-Mischung, Heading kommt nur aus echter Zeiger-/Tastatur-Fahrt)
+  if (speed > 2.5 && !inactive) {
+    const hx = Math.sin(swimmer.heading);
+    const hz = -Math.cos(swimmer.heading);
+    const k = 1 - Math.pow(0.05, dt);
+    const mx = pk.dirX + (hx - pk.dirX) * k;
+    const mz = pk.dirZ + (hz - pk.dirZ) * k;
+    const n = Math.hypot(mx, mz);
+    if (n > 1e-4) { pk.dirX = mx / n; pk.dirZ = mz / n; }
+  }
+  pk.x = swimmer.x;
+  pk.z = swimmer.z;
+
+  // Energie-Reservoir: Zufluss E = ½v² (gedeckelt), Zerfall beim Abbremsen
+  const target = inactive ? 0 : 0.5 * Math.min(speed, 45) ** 2;
+  if (target >= pk.energy) {
+    pk.energy += (target - pk.energy) * (1 - Math.exp(-P.FILL * dt));
+  } else {
+    const shed = (pk.energy - target) * (1 - Math.exp(-P.DECAY * dt));
+    pk.energy -= shed;
+    _shedAcc += shed;
+    pk.shedTotal += shed;
+  }
+  pk.amp = Math.min(P.MAX_AMP, P.GAIN * Math.sqrt(2 * Math.max(pk.energy, 0)));
+  pk.active = swimmer.smActive;
+
+  // Ringwellen-Train: abgebremste Energie läuft als Ringe aus (gedrosselt)
+  if (_shedAcc > 55 && t - _lastRingT > 0.35) {
+    _lastRingT = t;
+    splat3D(x2w(pk.x), z2w(pk.z), Math.min(1.2, 0.35 + _shedAcc / 280));
+    _shedAcc *= 0.25;
+  }
+
+  // Brechen: Jacobi-Minimum an der Steilflanke (sin φ = 1) → Gischt-Spray
+  if (pk.amp > 0.45 && t - _lastSprayT > 0.28) {
+    const kW = (2 * Math.PI) / pk.len;
+    const w = packetOmega(pk.len);
+    const twoPi = 2 * Math.PI;
+    // u-Offset der steilsten Flanke, ins Intervall [-λ/2, λ/2) um das Zentrum
+    let uStar = ((w * t + Math.PI / 2) % twoPi) / kW;
+    if (uStar >= pk.len / 2) uStar -= pk.len;
+    const sx = pk.x + pk.dirX * uStar;
+    const sz = pk.z + pk.dirZ * uStar;
+    const smp = wavePacket(sx, sz, t);
+    if (smp.j < P.BREAK_J && smp.env > 0.35) {
+      _lastSprayT = t;
+      splat3D(x2w(sx), z2w(sz), Math.min(1.6, 0.5 + (P.BREAK_J - smp.j) * 2.6));
+    }
+  }
+}
+
+
 export function stepSwimmer(dt: number, t: number): SwimStepOut {
   const s = getOceanState();
   const inactive = !!s.view || !!s.sailing;
@@ -310,6 +379,9 @@ export function stepSwimmer(dt: number, t: number): SwimStepOut {
   const dyn = 1 + swimmer.landPulse + Math.min(0.35, speed * 0.008);
   bodyState.strength = swimmer.smStrength * dyn;
   bodyState.active = swimmer.smActive;
+
+  // Das Wellenpaket: Energie ∝ v² → Amplitude, Zerfall, Brechen
+  stepPacket(dt, t, speed, inactive);
 
   return { speed, mode, field: fieldForces(), landed };
 }
