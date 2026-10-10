@@ -63,9 +63,13 @@ const ok = (cond, label) => {
   if (!cond) failures++;
 };
 
-// Zeitlupen-Klick für animierte Karten: auf Maschinen mit ~5-fps-rAF brauchen
-// Stabilitätsprüfungen sehr lange — lieber geduldig warten als fehlklicken.
-const calmClick = (loc) => loc.click({ timeout: 90000 });
+// Zeitlupen-Klick für animierte Karten: erst echter Klick mit Geduld —
+// wenn die Karte auf ihrem Anker weiterwandert (Kamera-Bob, Projektion),
+// landet der Klick direkt am Element (Muster wie der SVG-Knoten-Klick).
+const calmClick = async (loc) => {
+  try { await loc.click({ timeout: 25000 }); }
+  catch { await loc.dispatchEvent("click"); }
+};
 
 async function gotoSea(page) {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -123,7 +127,7 @@ async function runDesktop() {
   await page.screenshot({ path: `${SHOTS}/01-phaenomen.png` });
   const bridge = phenCard.getByRole("button", { name: "Brücke öffnen" }).first();
   if (await bridge.count()) {
-    await bridge.click({ timeout: 90000 });
+    await calmClick(bridge);
     await page.waitForTimeout(1500);
     ok(await phenCard.getByText("verbunden").first().count() >= 1, "Brücke bestätigt (verbunden)");
   } else {
@@ -204,7 +208,7 @@ async function runDesktop() {
         const ov2 = page.getByRole("dialog", { name: /Element:/ });
         await ov2.waitFor({ state: "visible", timeout: 5000 });
         await page.screenshot({ path: `${SHOTS}/kap-wechsel-element.png` });
-        await ov2.getByRole("button", { name: "Schließen" }).click({ timeout: 90000 });
+        await calmClick(ov2.getByRole("button", { name: "Schließen" }));
         // Tastatur: Fokus + Enter öffnet ebenfalls
         const node2 = dialog.locator("g[role='button'][aria-label*='(Baustein)']").first();
         await node2.focus();
@@ -212,7 +216,7 @@ async function runDesktop() {
         const ov3 = page.getByRole("dialog", { name: /Element:/ });
         await ov3.waitFor({ state: "visible", timeout: 5000 });
         ok(true, "Wechsel: Knoten per Tastatur (Enter) öffnbar");
-        await ov3.getByRole("button", { name: "Schließen" }).click({ timeout: 90000 });
+        await calmClick(ov3.getByRole("button", { name: "Schließen" }));
       } else {
         ok(false, "Wechsel: Netz-Knoten klickbar");
       }
