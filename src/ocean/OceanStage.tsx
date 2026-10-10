@@ -760,6 +760,8 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   const pointer = useRef({
     down: false, moved: false, sx: 0, sy: 0, lx: 0, ly: 0, px: 0, py: 0, pt: 0,
     speedEMA: 0, stillSince: 0,
+    touch1: null as number | null, // pointerId des ersten Fingers (führt die Welle)
+    touch2: null as number | null, // pointerId des zweiten Fingers (zweite Welle)
   });
   const pendingIsland = useRef<IslandId | null>(null);
   const ambient = useRef({ t: 0, next: 0 });
@@ -896,15 +898,36 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         const t = e.target as HTMLElement;
         if (!t.closest('[role="dialog"]') && ocean.selected) selectPhenomenon(null);
         const p = pointer.current;
+        // Zweiter Finger = zweite Welle: nur registrieren, keine Klick-/Drag-Logik
+        if (e.pointerType === "touch") {
+          if (p.touch1 === null) p.touch1 = e.pointerId;
+          else if (p.touch2 === null && e.pointerId !== p.touch1) {
+            p.touch2 = e.pointerId;
+            projStore.pointer2.cx = e.clientX;
+            projStore.pointer2.cy = e.clientY;
+            projStore.pointer2.t = performance.now();
+            projStore.pointer2.alive = true;
+            t.setPointerCapture?.(e.pointerId);
+            return;
+          }
+        }
         p.down = true; p.moved = false;
         p.sx = p.lx = e.clientX; p.sy = p.ly = e.clientY;
         t.setPointerCapture?.(e.pointerId);
       },
       onPointerMove: (e: React.PointerEvent) => {
         const p = pointer.current;
+        const now = performance.now();
+        // Zweiter Finger: steuert ausschließlich die zweite Welle
+        if (e.pointerType === "touch" && e.pointerId === p.touch2) {
+          projStore.pointer2.cx = e.clientX;
+          projStore.pointer2.cy = e.clientY;
+          projStore.pointer2.t = now;
+          projStore.pointer2.alive = true;
+          return;
+        }
         const dx = e.clientX - p.lx;
         const dy = e.clientY - p.ly;
-        const now = performance.now();
         const dtms = Math.max(now - p.pt, 8);
         const inst = Math.hypot(dx, dy) / dtms;
         p.speedEMA = p.speedEMA * 0.9 + inst * 0.1;
@@ -917,6 +940,14 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         projStore.pointer.cy = e.clientY;
         projStore.pointer.t = now;
         projStore.pointer.alive = true;
+        // Maus: beide Maustasten ODER Cmd → zweite Welle am selben Zeiger
+        if (e.pointerType !== "touch") {
+          const zweit = (e.buttons & 3) === 3 || e.metaKey;
+          projStore.pointer2.cx = e.clientX;
+          projStore.pointer2.cy = e.clientY;
+          projStore.pointer2.t = now;
+          projStore.pointer2.alive = zweit;
+        }
         // Maus-Look: horizontale Bewegung lenkt (wirkt voll in der Tastatur-Fahrt)
         mouseLook.dx += e.movementX || 0;
 
@@ -943,12 +974,24 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         }
         p.lx = e.clientX; p.ly = e.clientY;
       },
-      onPointerUp: () => {
-        pointer.current.down = false;
+      onPointerUp: (e: React.PointerEvent) => {
+        const p = pointer.current;
+        if (e.pointerType === "touch") {
+          if (e.pointerId === p.touch2) {
+            p.touch2 = null;
+            projStore.pointer2.alive = false;
+            return;
+          }
+          if (e.pointerId === p.touch1) p.touch1 = null;
+        } else if ((e.buttons & 3) !== 3 && !e.metaKey) {
+          projStore.pointer2.alive = false;
+        }
+        p.down = false;
         projStore.dragging = false;
       },
       onPointerLeave: () => {
         projStore.pointer.alive = false;
+        projStore.pointer2.alive = false;
       },
       // Klick aufs offene Wasser (3D): Schwimm-Ziel — Zeiger-Führung schlägt es sofort
       onClick: (e: React.MouseEvent) => {

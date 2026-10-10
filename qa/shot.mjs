@@ -255,6 +255,39 @@ try {
       await page.screenshot({ path: `${SHOTS}/welle-aus.png` });
     }
 
+    if (scenario === "welle2") {
+      // Zwei gepinnte Pakete kreuzen sich weit draußen (3D (0,27) ≈ Welt
+      // (2600,2140) — >800 Welteinheiten von jeder Insel, keine Wildling-
+      // Bahnen): Kämme senkrecht, im Kreuz entsteht das Beugungsmuster
+      // (lineare Addition — die Physik malt das Muster von selbst).
+      await page.evaluate(() => {
+        const sw = window.__ta3swim;
+        sw.x = 0; sw.z = 27; sw.vx = 0; sw.vz = 0; sw.heading = Math.PI;
+        // Kamera schaut im Zeiger-Modus nach Norden (−z): Pakete NÖRDLICH
+        const pk = window.__ta3pack;
+        pk.pinned = true;
+        pk.x = -3.2; pk.z = 21;
+        pk.dirX = 1; pk.dirZ = 0;
+        pk.energy = 300; pk.amp = 0.68; pk.active = 1;
+        const p2 = window.__ta3pack2;
+        p2.pinned = true;
+        p2.x = 3.2; p2.z = 21;
+        p2.dirX = 0; p2.dirZ = 1;
+        p2.energy = 300; p2.amp = 0.68; p2.active = 1;
+      });
+      await sleep(1800);
+      const schliessen = page.getByRole("button", { name: "Schließen" });
+      for (const name of ["welle2-0", "welle2-1", "welle2-2"]) {
+        if (await schliessen.count()) { await schliessen.first().click(); await sleep(500); }
+        await page.screenshot({ path: `${SHOTS}/${name}.png` });
+        await sleep(1100);
+      }
+      // Gegenprobe: Paket 2 aus — nur Paket 1 bleibt
+      await page.evaluate(() => { window.__ta3pack2.amp = 0; });
+      await sleep(600);
+      await page.screenshot({ path: `${SHOTS}/welle2-aus.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);

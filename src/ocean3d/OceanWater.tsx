@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKET_PROFILE, bodyState, packetState, packetOmega } from "./waves";
+import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKET_PROFILE, bodyState, packetState, packet2State, packetOmega } from "./waves";
 import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
@@ -56,6 +56,17 @@ void main() {
   p.z += pdisp * uPackA.w;
   nrm = normalize(vec3(nrm.x - pgrad.x, nrm.y, nrm.z - pgrad.y));
   crest = max(crest, smoothstep(0.62, 0.30, pj));
+
+  // Die zweite Welle: gleiche Mathematik, eigener Zustand — lineare Addition
+  // (Superposition): kreuzende Pakete zeigen ihr Beugungsmuster von selbst.
+  vec2 p2grad;
+  float p2j, p2env, p2disp;
+  float p2h = packet2Height(position.xz, p2grad, p2j, p2env, p2disp);
+  p.y += p2h;
+  p.x += p2disp * uPack2A.z;
+  p.z += p2disp * uPack2A.w;
+  nrm = normalize(vec3(nrm.x - p2grad.x, nrm.y, nrm.z - p2grad.y));
+  crest = max(crest, smoothstep(0.62, 0.30, p2j));
 
   vWorldPos = p;
   vNormal = nrm;
@@ -148,6 +159,17 @@ void main() {
   float phN = pfh / max(pAmp * pfenv, 1e-4);
   float crestBand = smoothstep(0.55, 0.92, phN) * pfenv;
   float troughBand = smoothstep(-0.5, -0.9, phN) * pfenv;
+
+  // Paket 2 fragment-genau: gleiche Mathematik — Höhen addieren sich linear,
+  // Normalen und Bänder folgen beiden Paketen.
+  vec2 pf2grad;
+  float pf2j, pf2env, pf2disp;
+  float pf2h = packet2Height(vWorldPos.xz, pf2grad, pf2j, pf2env, pf2disp);
+  N = normalize(vec3(N.x - pf2grad.x * 0.85, N.y, N.z - pf2grad.y * 0.85));
+  float p2Amp = uPack2B.x;
+  float ph2N = pf2h / max(p2Amp * pf2env, 1e-4);
+  float crestBand2 = smoothstep(0.55, 0.92, ph2N) * pf2env;
+  float troughBand2 = smoothstep(-0.5, -0.9, ph2N) * pf2env;
   // Fresnel (Schlick)
   float f = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
 
@@ -173,7 +195,7 @@ void main() {
   // Die Welle trägt ein leises Eigenlicht: die Hüllkurve hebt den Wasserkörper
   // minimal an — die Schattflanke kippt nie zur schwarzen Schneise, und man
   // sieht immer, wo man ist (wie den Finger auf dem Touchscreen).
-  col += uShallowColor * pfenv * 0.12;
+  col += uShallowColor * (pfenv + pf2env) * 0.12;
 
   // Mondspekular + Glitzerpfad
   vec3 H = normalize(V + uMoonDir);
@@ -187,7 +209,7 @@ void main() {
   // Kamms — mondgetrieben (uMoonDir/uMoonColor), an flachen Blickwinkeln
   // stärker. Enge Phase (Band²) + enger Spec-Kern (260) + feiner Saum (42):
   // eine helle Linie am Kamm, kein Fleck. Signatur des Selbst, ohne Körper.
-  float glintBand = smoothstep(0.68, 0.95, phN) * pfenv;
+  float glintBand = max(smoothstep(0.68, 0.95, phN) * pfenv, smoothstep(0.68, 0.95, ph2N) * pf2env);
   float glint = glintBand * glintBand * (0.45 + 0.55 * f) * (0.7 + 0.6 * sparkle);
   col += uMoonColor * glint * (pow(dh, 260.0) * 1.35 + pow(dh, 42.0) * 0.10);
 
@@ -195,7 +217,7 @@ void main() {
   // Oktaven lesen wie ein ruhig atmendes Lichtnetz im Wellental, nie grell.
   float caustic = vnoise(vWorldPos.xz * 3.1 + uTime * 0.22) * vnoise(vWorldPos.xz * 4.6 - uTime * 0.16);
   caustic = pow(caustic * 1.85, 2.3);
-  col += mix(uShallowColor, uMoonColor, 0.25) * troughBand * caustic * 0.18;
+  col += mix(uShallowColor, uMoonColor, 0.25) * (troughBand + troughBand2) * caustic * 0.18;
   // Übersichts-Sheen: weiche Mondbahn — nur in Blickrichtung des Mondes
   float dhBroad = max(dot(normalize(vNormal), H), 0.0);
   vec2 viewAz = normalize(vWorldPos.xz - cameraPosition.xz + vec2(1e-4));
@@ -229,8 +251,9 @@ void main() {
   // Kamm-Gischt + Ringwellen-Gischt + Paket-Brechung (Jacobi, fragment-genau)
   // + feine Schaumspitze auf dem eigenen Kamm, sobald das Paket Tempo trägt
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
-  float packFoam = smoothstep(0.66, 0.30, pfj);
-  float crestFoam = crestBand * crestBand * smoothstep(0.42, 0.8, pAmp) * (0.4 + 0.6 * foamN);
+  float packFoam = max(smoothstep(0.66, 0.30, pfj), smoothstep(0.66, 0.30, pf2j));
+  float crestFoam = (crestBand * crestBand * smoothstep(0.42, 0.8, pAmp)
+    + crestBand2 * crestBand2 * smoothstep(0.42, 0.8, p2Amp)) * (0.4 + 0.6 * foamN);
   float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.55);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
 
@@ -388,6 +411,9 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uPackA: { value: new THREE.Vector4(0, 0, 0, -1) },
           uPackB: { value: new THREE.Vector4(0, 1, PACKET_PROFILE.SIGMA_U, PACKET_PROFILE.SIGMA_V) },
           uPackC: { value: new THREE.Vector2(packetOmega(), PACKET_PROFILE.Q) },
+          uPack2A: { value: new THREE.Vector4(0, 0, 0, -1) },
+          uPack2B: { value: new THREE.Vector4(0, 1, PACKET_PROFILE.SIGMA_U, PACKET_PROFILE.SIGMA_V) },
+          uPack2C: { value: new THREE.Vector2(packetOmega(), PACKET_PROFILE.Q) },
         },
       ]),
     });
@@ -444,6 +470,19 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     );
     const uPC = mat.uniforms.uPackC.value as THREE.Vector2;
     uPC.set(packetOmega(packetState.len), PACKET_PROFILE.Q);
+
+    // Zweite Welle: eigener Zustand → eigene Uniforms (Superposition im Shader)
+    const uP2A = mat.uniforms.uPack2A.value as THREE.Vector4;
+    uP2A.set(packet2State.x, packet2State.z, packet2State.dirX, packet2State.dirZ);
+    const uP2B = mat.uniforms.uPack2B.value as THREE.Vector4;
+    uP2B.set(
+      packet2State.amp * packet2State.active,
+      (2 * Math.PI) / packet2State.len,
+      packet2State.sigmaU,
+      packet2State.sigmaV,
+    );
+    const uP2C = mat.uniforms.uPack2C.value as THREE.Vector2;
+    uP2C.set(packetOmega(packet2State.len), PACKET_PROFILE.Q);
 
     // Stille beruhigt die Wellen (weich gedämpft)
     const target = projStore.calm;

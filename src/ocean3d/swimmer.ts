@@ -9,7 +9,7 @@
 
 import { getOceanState, setOcean } from "../ocean/world";
 import { w2x, w2z } from "./coords";
-import { bodyState, waveHeight, packetState, packetOmega, wavePacket, PACKET_PROFILE } from "./waves";
+import { bodyState, waveHeight, packetState, packet2State, packetOmega, wavePacket, wavePacket2, PACKET_PROFILE } from "./waves";
 import { projStore, screenToWater, splat3D } from "./projStore";
 import { x2w, z2w } from "./coords";
 
@@ -243,6 +243,95 @@ export function stepPacket(dt: number, t: number, speed: number, inactive: boole
   }
 }
 
+// ── Die zweite Welle: eigener Zeiger, eigene Energie ─────────────────────────
+// Zweiter Finger (Touch) bzw. beide Maustasten / Cmd (Maus) führen ein zweites,
+// unabhängiges Paket — gleiche Energie-Physik (E ∝ v², A ∝ √(2E)), gleiche
+// Würde. Ohne zweiten Zeiger zerfällt es mit DECAY zum Ringwellen-Train.
+
+let _shedAcc2 = 0;
+let _lastRing2T = -1e9;
+let _lastSpray2T = -1e9;
+let _act2 = 0;
+let _v2x = 0;
+let _v2z = 0;
+
+export function stepPacket2(dt: number, t: number, inactive: boolean) {
+  const pk = packet2State;
+  if (pk.pinned) return; // QA: starrer Test-Sweep
+  const P = PACKET_PROFILE;
+  const ptr2 = projStore.pointer2;
+  const live = !inactive && ptr2.alive;
+
+  // Aktiv-Blende weich (wie swimmer.smActive, aber am zweiten Zeiger hängend)
+  _act2 += ((live ? 1 : 0) - _act2) * (1 - Math.exp(-5 * dt));
+
+  if (live) {
+    const w = screenToWater(ptr2.cx, ptr2.cy);
+    if (w) {
+      const tx = w2x(w.wx);
+      const tz = w2z(w.wy);
+      // Momentangeschwindigkeit des zweiten Zeigers (geglättet wie Paket 1)
+      const ivx = (tx - pk.x) / dt;
+      const ivz = (tz - pk.z) / dt;
+      _v2x = _v2x * 0.7 + ivx * 0.3;
+      _v2z = _v2z * 0.7 + ivz * 0.3;
+      pk.x = tx;
+      pk.z = tz;
+      // Richtung nur aus echter Bewegung — im Stand nicht nachdrehen
+      const sp = Math.hypot(_v2x, _v2z);
+      if (sp > 2.5) {
+        const hx = _v2x / sp;
+        const hz = _v2z / sp;
+        const k = 1 - Math.pow(0.05, dt);
+        const mx = pk.dirX + (hx - pk.dirX) * k;
+        const mz = pk.dirZ + (hz - pk.dirZ) * k;
+        const n = Math.hypot(mx, mz);
+        if (n > 1e-4) { pk.dirX = mx / n; pk.dirZ = mz / n; }
+      }
+    }
+  } else {
+    _v2x = 0;
+    _v2z = 0;
+  }
+
+  // Energie-Reservoir: Zufluss E = ½v² (gedeckelt), Zerfall beim Loslassen
+  const sp2 = Math.hypot(_v2x, _v2z);
+  const target = live ? 0.5 * Math.min(sp2, 45) ** 2 : 0;
+  if (target >= pk.energy) {
+    pk.energy += (target - pk.energy) * (1 - Math.exp(-P.FILL * dt));
+  } else {
+    const shed = (pk.energy - target) * (1 - Math.exp(-P.DECAY * dt));
+    pk.energy -= shed;
+    _shedAcc2 += shed;
+    pk.shedTotal += shed;
+  }
+  pk.amp = Math.min(P.MAX_AMP, P.GAIN * Math.sqrt(2 * Math.max(pk.energy, 0)));
+  pk.active = _act2;
+
+  // Ringwellen-Train beim Loslassen (gedrosselt)
+  if (_shedAcc2 > 55 && t - _lastRing2T > 0.35) {
+    _lastRing2T = t;
+    splat3D(x2w(pk.x), z2w(pk.z), Math.min(1.2, 0.35 + _shedAcc2 / 280));
+    _shedAcc2 *= 0.25;
+  }
+
+  // Brechen: Jacobi-Minimum an der Steilflanke → Gischt-Spray
+  if (pk.amp > 0.45 && t - _lastSpray2T > 0.28) {
+    const kW = (2 * Math.PI) / pk.len;
+    const w = packetOmega(pk.len);
+    const twoPi = 2 * Math.PI;
+    let uStar = ((w * t + Math.PI / 2) % twoPi) / kW;
+    if (uStar >= pk.len / 2) uStar -= pk.len;
+    const sx = pk.x + pk.dirX * uStar;
+    const sz = pk.z + pk.dirZ * uStar;
+    const smp = wavePacket2(sx, sz, t);
+    if (smp.j < P.BREAK_J && smp.env > 0.35) {
+      _lastSpray2T = t;
+      splat3D(x2w(sx), z2w(sz), Math.min(1.6, 0.5 + (P.BREAK_J - smp.j) * 2.6));
+    }
+  }
+}
+
 
 export function stepSwimmer(dt: number, t: number): SwimStepOut {
   const s = getOceanState();
@@ -382,6 +471,8 @@ export function stepSwimmer(dt: number, t: number): SwimStepOut {
 
   // Das Wellenpaket: Energie ∝ v² → Amplitude, Zerfall, Brechen
   stepPacket(dt, t, speed, inactive);
+  // Die zweite Welle: zweiter Finger / beide Tasten / Cmd
+  stepPacket2(dt, t, inactive);
 
   return { speed, mode, field: fieldForces(), landed };
 }

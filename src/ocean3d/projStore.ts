@@ -25,6 +25,8 @@ export const projStore = {
   dragging: false,
   /** Zeigerposition (Client-px) + Zeitpunkt — der Schwimmer folgt diesem Punkt */
   pointer: { cx: 0, cy: 0, t: 0, alive: false },
+  /** Zweiter Zeiger (zweiter Finger, bei Maus: beide Tasten/Cmd) — die zweite Welle */
+  pointer2: { cx: 0, cy: 0, t: 0, alive: false },
 };
 
 // ── Ringwellen-Brücke: OceanStage meldet Wasser-Kontakte ─────

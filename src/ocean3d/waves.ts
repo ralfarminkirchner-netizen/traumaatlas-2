@@ -206,8 +206,26 @@ export const packetState = {
   shedTotal: 0,
 };
 
+/** Zweites unabhängiges Paket: zweiter Finger (Touch), bei Maus beide
+ *  Maustasten ODER Cmd. Gleiche Physik, eigener Zustand — die Pakete
+ *  superponieren sich im Shader per linearer Addition (Beugung beim Kreuzen). */
+export const packet2State = {
+  x: 0,
+  z: 0,
+  dirX: 0,
+  dirZ: -1,
+  energy: 0,
+  amp: 0,
+  len: PACKET_PROFILE.LEN,
+  sigmaU: PACKET_PROFILE.SIGMA_U,
+  sigmaV: PACKET_PROFILE.SIGMA_V,
+  active: 0,
+  pinned: false,
+  shedTotal: 0,
+};
+
 /** Kreisfrequenz der Trägerwelle: Tiefwasser-Dispersion ω = √(g·k), gedehnt. */
-export function packetOmega(len = packetState.len): number {
+export function packetOmega(len: number = packetState.len): number {
   return angularFreq(len) * PACKET_PROFILE.DILATION;
 }
 
@@ -223,25 +241,31 @@ export interface PacketSample {
   disp: number;
 }
 
-/** Paket-Abtastung an (x,z) zur Zeit t — deckungsgleich mit packetHeight() im Shader. */
-export function wavePacket(x: number, z: number, t: number): PacketSample {
-  const A = packetState.amp * packetState.active;
+/** Struktur, die ein Paket zum Samplen braucht (packetState / packet2State). */
+interface PacketLike {
+  x: number; z: number; dirX: number; dirZ: number;
+  amp: number; active: number; len: number; sigmaU: number; sigmaV: number;
+}
+
+/** Gemeinsame Paket-Mathematik — deckungsgleich mit packetCore() im Shader. */
+function wavePacketAt(x: number, z: number, t: number, pk: PacketLike): PacketSample {
+  const A = pk.amp * pk.active;
   if (A <= 1e-5) return { h: 0, gx: 0, gz: 0, j: 1, env: 0, disp: 0 };
-  const dx = x - packetState.x;
-  const dz = z - packetState.z;
-  const ux = packetState.dirX;
-  const uz = packetState.dirZ;
+  const dx = x - pk.x;
+  const dz = z - pk.z;
+  const ux = pk.dirX;
+  const uz = pk.dirZ;
   const px = -uz;
   const pz = ux;
   const u = ux * dx + uz * dz;
   const v = px * dx + pz * dz;
-  const su = Math.max(packetState.sigmaU, 0.3);
-  const sv = Math.max(packetState.sigmaV, 0.3);
+  const su = Math.max(pk.sigmaU, 0.3);
+  const sv = Math.max(pk.sigmaV, 0.3);
   const eu = (-2 * u) / (su * su);
   const ev = (-2 * v) / (sv * sv);
   const env = Math.exp(-(u * u) / (su * su) - (v * v) / (sv * sv));
-  const k = (2 * Math.PI) / packetState.len;
-  const w = packetOmega(packetState.len);
+  const k = (2 * Math.PI) / pk.len;
+  const w = packetOmega(pk.len);
   const phi = k * u - w * t;
   const s = Math.sin(phi);
   const c = Math.cos(phi);
@@ -257,44 +281,69 @@ export function wavePacket(x: number, z: number, t: number): PacketSample {
   return { h, gx, gz, j, env, disp };
 }
 
-/** GLSL: Uniforms + Funktion, exakte Spiegelung der CPU-Mathematik oben. */
+/** Paket 1 (das Selbst) — deckungsgleich mit packetHeight() im Shader. */
+export function wavePacket(x: number, z: number, t: number): PacketSample {
+  return wavePacketAt(x, z, t, packetState);
+}
+
+/** Paket 2 (die zweite Welle) — deckungsgleich mit packet2Height() im Shader. */
+export function wavePacket2(x: number, z: number, t: number): PacketSample {
+  return wavePacketAt(x, z, t, packet2State);
+}
+
+/** GLSL: Uniforms + Funktionen, exakte Spiegelung der CPU-Mathematik oben. */
 export const PACKET_GLSL = /* glsl */ `
-uniform vec4 uPackA; // x, z, dirX, dirZ
+uniform vec4 uPackA; // Paket 1 (das Selbst): x, z, dirX, dirZ
 uniform vec4 uPackB; // amp·aktiv, k, sigmaU, sigmaV
 uniform vec2 uPackC; // omega, q (Steilheit)
+uniform vec4 uPack2A; // Paket 2 (zweiter Finger / Cmd): x, z, dirX, dirZ
+uniform vec4 uPack2B; // amp·aktiv, k, sigmaU, sigmaV
+uniform vec2 uPack2C; // omega, q
 
-// Laufendes gerichtetes Gauß-Wellenpaket (das Selbst).
+// Gemeinsamer Kern: laufendes gerichtetes Gauß-Wellenpaket.
 // Liefert Höhe; out: Höhengradient, Jacobi, Hüllkurve, horiz. Verdrängung.
-float packetHeight(vec2 xz, out vec2 grad, out float j, out float env, out float disp) {
+float packetCore(vec2 xz, vec4 pA, vec4 pB, vec2 pC, out vec2 grad, out float j, out float env, out float disp) {
   grad = vec2(0.0); j = 1.0; env = 0.0; disp = 0.0;
-  float A = uPackB.x;
+  float A = pB.x;
   if (A <= 1e-5) return 0.0;
-  vec2 d = xz - uPackA.xy;
-  vec2 dir = uPackA.zw;
+  vec2 d = xz - pA.xy;
+  vec2 dir = pA.zw;
   vec2 per = vec2(-dir.y, dir.x);
   float u = dot(dir, d);
   float v = dot(per, d);
-  float su = max(uPackB.z, 0.3);
-  float sv = max(uPackB.w, 0.3);
+  float su = max(pB.z, 0.3);
+  float sv = max(pB.w, 0.3);
   float eu = -2.0 * u / (su * su);
   float ev = -2.0 * v / (sv * sv);
   env = exp(-u * u / (su * su) - v * v / (sv * sv));
-  float k = uPackB.y;
-  float phi = k * u - uPackC.x * uTime;
+  float k = pB.y;
+  float phi = k * u - pC.x * uTime;
   float s = sin(phi);
   float c = cos(phi);
   float h = A * env * s;
   vec2 denv = env * (eu * dir + ev * per);
   grad = A * (denv * s + env * c * k * dir);
-  disp = uPackC.y * A * env * c;
-  j = 1.0 + uPackC.y * A * env * (eu * c - k * s);
+  disp = pC.y * A * env * c;
+  j = 1.0 + pC.y * A * env * (eu * c - k * s);
   return h;
+}
+
+// Paket 1 (das Selbst) — deckungsgleich mit wavePacket() auf der CPU.
+float packetHeight(vec2 xz, out vec2 grad, out float j, out float env, out float disp) {
+  return packetCore(xz, uPackA, uPackB, uPackC, grad, j, env, disp);
+}
+
+// Paket 2 (die zweite Welle) — deckungsgleich mit wavePacket2() auf der CPU.
+float packet2Height(vec2 xz, out vec2 grad, out float j, out float env, out float disp) {
+  return packetCore(xz, uPack2A, uPack2B, uPack2C, grad, j, env, disp);
 }
 `;
 
-// QA-/Debug-Spiegel: Paketzustand am Window lesbar/stellbar (Probes, shot.mjs)
+// QA-/Debug-Spiegel: Paketzustände am Window lesbar/stellbar (Probes, shot.mjs)
 if (typeof window !== "undefined") {
-  (window as unknown as { __ta3pack?: typeof packetState }).__ta3pack = packetState;
+  const w = window as unknown as { __ta3pack?: typeof packetState; __ta3pack2?: typeof packet2State };
+  w.__ta3pack = packetState;
+  w.__ta3pack2 = packet2State;
 }
 
 // ── GLSL ─────────────────────────────────────────────────────────────────────
