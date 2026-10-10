@@ -180,7 +180,7 @@ export const PACKET_PROFILE = {
   MAX_AMP: 1.35,
   /** Ruhe-Präsenz: atmende Basis-Amplitude im Stand — die Welle ist IMMER
    *  da (wie der Finger auf dem Touchscreen), nie ein totes, flaches Meer */
-  REST_AMP: 0.2,
+  REST_AMP: 0.3,
   /** Aufladerate des Energie-Reservoirs (1/s) — schnelle Antwort auf Zeiger */
   FILL: 6.0,
   /** Zerfallsrate beim Abbremsen (1/s) — die Welle läuft aus, nicht abrupt aus */
