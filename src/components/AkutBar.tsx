@@ -1,10 +1,23 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Phone, Siren, X } from "lucide-react";
+import { Maximize, Minimize, Phone, Siren, X } from "lucide-react";
 
 /** Akut-Leiste: global sichtbar, dezent, jederzeit aufklappbar. */
 export function AkutBar() {
   const [open, setOpen] = useState(false);
+  const [fs, setFs] = useState(() => !!document.fullscreenElement);
+
+  // Vollbild-Zustand mitführen (auch ESC/System-Wechsel aktualisieren das Icon)
+  useEffect(() => {
+    const onFs = () => setFs(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.();
+  };
 
   return (
     <div className="fixed inset-x-0 top-0 z-50">
@@ -18,12 +31,24 @@ export function AkutBar() {
           <span className="font-medium">Akut hilfe nötig?</span>
           <span className="hidden text-white/40 sm:inline">Telefonseelsorge 0800 111 0 111 · rund um die Uhr, kostenfrei</span>
         </button>
-        <a
-          href="tel:08001110111"
-          className="flex items-center gap-1.5 rounded-full border border-[#e2a35c]/40 bg-[#e2a35c]/10 px-3 py-1 text-[12px] font-semibold text-[#e2a35c] transition-colors hover:bg-[#e2a35c]/20"
-        >
-          <Phone className="h-3 w-3" aria-hidden /> 0800 111 0 111
-        </a>
+        <div className="flex items-center gap-2">
+          {/* Vollbild: in jedem Fenster verfügbar (die Leiste bleibt überall sichtbar) */}
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1.5 rounded-full border border-white/15 px-2.5 py-1 text-[12px] text-white/60 transition-colors hover:border-[#e8c9a0]/50 hover:text-[#e8c9a0]"
+            aria-label={fs ? "Vollbild verlassen" : "Vollbild"}
+            title={fs ? "Vollbild verlassen" : "Vollbild"}
+          >
+            {fs ? <Minimize className="h-3.5 w-3.5" aria-hidden /> : <Maximize className="h-3.5 w-3.5" aria-hidden />}
+            <span className="hidden sm:inline">{fs ? "Verlassen" : "Vollbild"}</span>
+          </button>
+          <a
+            href="tel:08001110111"
+            className="flex items-center gap-1.5 rounded-full border border-[#e2a35c]/40 bg-[#e2a35c]/10 px-3 py-1 text-[12px] font-semibold text-[#e2a35c] transition-colors hover:bg-[#e2a35c]/20"
+          >
+            <Phone className="h-3 w-3" aria-hidden /> 0800 111 0 111
+          </a>
+        </div>
       </div>
 
       <AnimatePresence>
