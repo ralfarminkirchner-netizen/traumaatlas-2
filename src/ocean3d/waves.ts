@@ -175,9 +175,12 @@ export const PACKET_PROFILE = {
   /** eigene Zeitdehnung — lebendiger als das Meer (0.16), würdevoller als echt */
   DILATION: 0.55,
   /** Amplituden-Gewinn: A = GAIN · √(2E), E = ½v² → A ∝ v */
-  GAIN: 0.03,
+  GAIN: 0.045,
   /** Würde-Deckel: nie Monsterwelle */
   MAX_AMP: 1.35,
+  /** Ruhe-Präsenz: atmende Basis-Amplitude im Stand — die Welle ist IMMER
+   *  da (wie der Finger auf dem Touchscreen), nie ein totes, flaches Meer */
+  REST_AMP: 0.2,
   /** Aufladerate des Energie-Reservoirs (1/s) — schnelle Antwort auf Zeiger */
   FILL: 6.0,
   /** Zerfallsrate beim Abbremsen (1/s) — die Welle läuft aus, nicht abrupt aus */
