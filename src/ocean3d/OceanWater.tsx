@@ -9,7 +9,7 @@ import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKE
 import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
-import { MOON_DIR } from "./SkyDome";
+import { dayState, sampleDay, celestialDirAt } from "./daynight";
 import { ISLANDS } from "../ocean/world";
 
 // ── Shader ───────────────────────────────────────────────────────────────────
@@ -90,7 +90,8 @@ uniform vec3 uFoamColor;
 uniform float uDetail; // Stärke der Detail-Normals (distanzgesteuert)
 uniform float uTime;
 uniform float uSheen;  // 0 = nah, 1 = Übersicht: breite Mondschein-Bahn
-uniform vec2 uMoonAz;  // normierter Mond-Azimut (xz-Ebene)
+uniform float uReflBoost; // Reflexionsstärke, phasenabhängig (Tag klarer)
+uniform vec2 uMoonAz;  // normierter Azimut der Lichtquelle (xz-Ebene)
 // Farbiges Lichtfeld: 10 Kapitel-Formationen (statisch) + bis zu 14 Bojen (dynamisch)
 uniform vec4 uPools[10];    // x, z, radius, grundintensität
 uniform vec3 uPoolColor[10];
@@ -189,7 +190,7 @@ void main() {
   // Wasserkörper + Reflexion über Fresnel; leichter Indigo-Ambientlift,
   // damit die Schattenseite nie zu Plastik-Schwarz kippt.
   // Reflexions-Basis niedrig: aus der Höhe kein heller Horizont-Wash.
-  vec3 col = mix(waterBody, refl, clamp(f * 1.25 + 0.15, 0.0, 1.0) * reflMask);
+  vec3 col = mix(waterBody, refl, clamp((f * 1.25 + 0.15) * uReflBoost, 0.0, 1.0) * reflMask);
   col += vec3(0.045, 0.07, 0.11) * (1.0 - f) * 0.55;
 
   // Die Welle trägt ein leises Eigenlicht: die Hüllkurve hebt den Wasserkörper
@@ -252,9 +253,9 @@ void main() {
   // + feine Schaumspitze auf dem eigenen Kamm, sobald das Paket Tempo trägt
   float foamN = vnoise(vWorldPos.xz * 2.4 + uTime * 0.1) * vnoise(vWorldPos.xz * 5.7 - uTime * 0.06);
   float packFoam = max(smoothstep(0.66, 0.30, pfj), smoothstep(0.66, 0.30, pf2j));
-  float crestFoam = (crestBand * crestBand * smoothstep(0.42, 0.8, pAmp)
-    + crestBand2 * crestBand2 * smoothstep(0.42, 0.8, p2Amp)) * (0.4 + 0.6 * foamN);
-  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.55);
+  float crestFoam = (crestBand * crestBand * smoothstep(0.58, 0.95, pAmp)
+    + crestBand2 * crestBand2 * smoothstep(0.58, 0.95, p2Amp)) * (0.4 + 0.6 * foamN);
+  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.4);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
 
   gl_FragColor = vec4(col, 1.0);
@@ -286,6 +287,7 @@ const _bias = new THREE.Matrix4().set(
   0, 0, 0.5, 0.5,
   0, 0, 0, 1,
 );
+const _celDir = new THREE.Vector3();
 
 /** Spiegelt die Kamera an der Ebene y=0 und setzt den obliquen Near-Clip. */
 function updateMirror(src: THREE.Camera, mirror: THREE.PerspectiveCamera, texMatrix: THREE.Matrix4) {
@@ -380,7 +382,7 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
       buoyVec.push(new THREE.Vector4(0, 0, 1, 0));
       buoyCol.push(new THREE.Color(0, 0, 0));
     }
-    const moonAz = new THREE.Vector2(MOON_DIR.x, MOON_DIR.z).normalize();
+    const moonAz = new THREE.Vector2(-0.46, -0.885).normalize();
 
     const material = new THREE.ShaderMaterial({
       vertexShader: VERT,
@@ -393,13 +395,14 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uCalm: { value: 0 },
           tReflect: { value: rt.texture },
           uTextureMatrix: { value: texMatrix },
-          uMoonDir: { value: MOON_DIR.clone() },
+          uMoonDir: { value: new THREE.Vector3(-0.46, 0.061, -0.885).normalize() },
           uMoonColor: { value: new THREE.Color("#f7e7c2") },
           uDeepColor: { value: new THREE.Color("#071423") },
           uShallowColor: { value: new THREE.Color("#10404a") },
           uFoamColor: { value: new THREE.Color("#aebdb6") },
           uDetail: { value: 1 },
           uSheen: { value: 0 },
+          uReflBoost: { value: 1 },
           uMoonAz: { value: moonAz },
           uPools: { value: poolVec },
           uPoolColor: { value: poolCol },
@@ -471,6 +474,20 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     const uPC = mat.uniforms.uPackC.value as THREE.Vector2;
     uPC.set(packetOmega(packetState.len), PACKET_PROFILE.Q);
 
+    // Tag/Nacht: EINE Lichtquelle (Sonne↔Mond) + phasenabhängige Palette —
+    // Wasserfarben, Lichtfarbe und Azimut folgen dem Zyklus (daynight.ts)
+    const pal = sampleDay(dayState.phase);
+    celestialDirAt(dayState.phase, _celDir);
+    (mat.uniforms.uMoonDir.value as THREE.Vector3).copy(_celDir);
+    (mat.uniforms.uMoonColor.value as THREE.Color).copy(pal.celestial);
+    (mat.uniforms.uDeepColor.value as THREE.Color).copy(pal.deep);
+    (mat.uniforms.uShallowColor.value as THREE.Color).copy(pal.shallow);
+    (mat.uniforms.uFoamColor.value as THREE.Color).copy(pal.foam);
+    (mat.uniforms.uMoonAz.value as THREE.Vector2).set(_celDir.x, _celDir.z).normalize();
+    mat.uniforms.uReflBoost.value = pal.reflBoost;
+    // Phänomen-Lichter: bei Tag stärker, damit sie sich immer lesen
+    const lightBoost = pal.lightBoost;
+
     // Zweite Welle: eigener Zustand → eigene Uniforms (Superposition im Shader)
     const uP2A = mat.uniforms.uPack2A.value as THREE.Vector4;
     uP2A.set(packet2State.x, packet2State.z, packet2State.dirX, packet2State.dirZ);
@@ -493,19 +510,20 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     const sheenT = THREE.MathUtils.clamp((camera.position.y - 9) / 30, 0, 1);
     mat.uniforms.uSheen.value += (sheenT - mat.uniforms.uSheen.value) * 0.04;
 
-    // Lichtfeld aus der Brücke in die Uniforms kopieren
+    // Lichtfeld aus der Brücke in die Uniforms kopieren — Intensitäten
+    // phasenverstärkt (lightBoost), damit sie sich auch bei Tag lesen
     const pv = mat.uniforms.uPools.value as THREE.Vector4[];
     const pc = mat.uniforms.uPoolColor.value as THREE.Color[];
     for (let i = 0; i < 10; i++) {
       const L = _pools[i];
-      if (L) { pv[i].set(L.x, L.z, L.r, L.i); pc[i].copy(L.c); }
+      if (L) { pv[i].set(L.x, L.z, L.r, L.i * lightBoost); pc[i].copy(L.c); }
     }
     const bv = mat.uniforms.uBuoys.value as THREE.Vector4[];
     const bc = mat.uniforms.uBuoyColor.value as THREE.Color[];
     const n = Math.min(_buoys.length, MAX_BUOYS);
     for (let i = 0; i < n; i++) {
       const L = _buoys[i];
-      bv[i].set(L.x, L.z, L.r, L.i);
+      bv[i].set(L.x, L.z, L.r, L.i * lightBoost);
       bc[i].copy(L.c);
     }
     mat.uniforms.uBuoyCount.value = n;

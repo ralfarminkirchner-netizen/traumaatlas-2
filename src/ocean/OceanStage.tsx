@@ -18,6 +18,7 @@ import { OceanCanvas } from "../ocean3d/OceanCanvas";
 import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
 import { splat3D, projStore, screenToWater } from "../ocean3d/projStore";
 import { swimmer, driveKeys, mouseLook } from "../ocean3d/swimmer";
+import { scrubDay } from "../ocean3d/daynight";
 import { WILDLINGS, wildState, catchWildling, wildProgress } from "../ocean/wildlife";
 import { w2x, w2z, x2w, z2w } from "../ocean3d/coords";
 import { seaBefund } from "@/kinformer/seaBefund";
@@ -743,6 +744,22 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
           >
             +
           </button>
+        </div>
+        {/* Tageszeit: stiller Schieber — die Sonne wandert, das Meer antwortet.
+            Scrubben hält den Zyklus kurz an, dann läuft er weiter. */}
+        <div className="flex items-center gap-2 rounded-md border border-white/10 bg-[#0d0a07]/85 px-2 py-1.5 backdrop-blur" role="group" aria-label="Tageszeit">
+          <span className="text-[11px] text-[#e8c9a0]/70" aria-hidden>☾</span>
+          <input
+            id="ta3-daytime"
+            type="range"
+            min={0}
+            max={1000}
+            defaultValue={820}
+            aria-label="Tageszeit wählen"
+            onChange={(e) => scrubDay(Number(e.target.value) / 1000)}
+            className="h-1 w-24 cursor-pointer accent-[#e8c9a0] sm:w-28"
+          />
+          <span className="text-[11px] text-[#e8c9a0]/70" aria-hidden>☀</span>
         </div>
       </div>
     </div>

@@ -18,12 +18,47 @@ import { WakeRibbon } from "./WakeRibbon";
 import { Constellations3D } from "./Constellations3D";
 import { Swimmer } from "./SwimmerBody";
 import { Wildlife3D } from "./Wildlife3D";
+import { dayState, stepDay, sampleDay, celestialDirAt } from "./daynight";
 
 const _v = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
 const _ndc = new THREE.Vector2();
 const _plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 const _hit = new THREE.Vector3();
+
+/** Tag/Nacht-Brücke: rückt den Zyklus vor und treibt Nebel, Szenenlichter
+ *  und Belichtung aus der Phasen-Palette (daynight.ts). Die eine Himmels-
+ *  lichtquelle wandert: das Richtungslicht folgt Sonne ↔ Mond. */
+function DayLightBridge() {
+  const scene = useThree((s) => s.scene);
+  const gl = useThree((s) => s.gl);
+  useFrame((_, delta) => {
+    stepDay(Math.min(delta, 0.05));
+    const pal = sampleDay(dayState.phase);
+    celestialDirAt(dayState.phase, _v);
+    const fog = scene.fog as THREE.FogExp2 | null;
+    if (fog) {
+      fog.color.copy(pal.fog);
+      fog.density = pal.fogDensity;
+    }
+    const amb = scene.getObjectByName("day-amb") as THREE.AmbientLight | undefined;
+    if (amb) { amb.color.copy(pal.ambient); amb.intensity = pal.ambientI; }
+    const hemi = scene.getObjectByName("day-hemi") as THREE.HemisphereLight | undefined;
+    if (hemi) {
+      hemi.color.copy(pal.hemiSky);
+      hemi.groundColor.copy(pal.hemiGround);
+      hemi.intensity = pal.hemiI;
+    }
+    const dir = scene.getObjectByName("day-dir") as THREE.DirectionalLight | undefined;
+    if (dir) {
+      dir.color.copy(pal.celestial);
+      dir.intensity = pal.dirI;
+      dir.position.copy(_v).multiplyScalar(65);
+    }
+    gl.toneMappingExposure = pal.exposure;
+  });
+  return null;
+}
 
 /** Registriert den Bildschirm→Wasser-Raycast (Klick-segeln aus der DOM-Stage). */
 function ScreenToWaterBridge() {
@@ -80,12 +115,14 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       style={{ position: "absolute", inset: 0 }}
     >
       <fogExp2 attach="fog" args={["#071120", 0.0095]} />
-      {/* Nacht-Grundstimmung: kühles Ambient + Hemisphären-Bounce vom Wasser.
-          Die Szene trägt sich über additive, leuchtende Körper — die Lichter
-          hier dienen nur den wenigen nicht-emissiven Teilen (Bojen-Sockel). */}
-      <ambientLight intensity={0.5} color="#364763" />
-      <hemisphereLight args={["#33476b", "#0c1018", 1.0]} />
-      <directionalLight position={[-30, 26, -57]} intensity={0.8} color="#d8e2f0" />
+      {/* Grundstimmung folgt dem Tag/Nacht-Zyklus (DayLightBridge treibt Farben
+          und Intensitäten pro Frame). Die Szene trägt sich über additive,
+          leuchtende Körper — die Lichter hier dienen nur den wenigen
+          nicht-emissiven Teilen (Bojen-Sockel). */}
+      <ambientLight name="day-amb" intensity={0.5} color="#364763" />
+      <hemisphereLight name="day-hemi" args={["#33476b", "#0c1018", 1.0]} />
+      <directionalLight name="day-dir" position={[-30, 26, -57]} intensity={0.8} color="#d8e2f0" />
+      <DayLightBridge />
       <CameraRig />
       <LabelsBridge />
       <ScreenToWaterBridge />
