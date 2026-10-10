@@ -54,7 +54,7 @@ function ChapterStage({ id }: { id: IslandId }) {
   // Atlas-Store mitführen (Views lesen daraus Auswahl/Erregung)
   useEffect(() => {
     setState({ view: id });
-    document.title = `TRAUMAATLAS 4 — ${isl.title}`;
+    document.title = `TRAUMAATLAS 5 — ${isl.title}`;
   }, [id, isl.title]);
 
   useEffect(() => {
@@ -106,7 +106,7 @@ function ChapterStage({ id }: { id: IslandId }) {
             </div>
             <footer className="mt-8 border-t border-white/[0.06] pt-6 pb-10">
               <p className="text-xs text-white/30">
-                TRAUMAATLAS 4 — Der Schwimmer im Meer der Phänomene · Akut: Telefonseelsorge 0800 111 0 111 · Hilfetelefon 116 016 · Notfall 112
+                TRAUMAATLAS 5 — Die Welle im Meer der Phänomene · Akut: Telefonseelsorge 0800 111 0 111 · Hilfetelefon 116 016 · Notfall 112
               </p>
             </footer>
           </main>
@@ -120,7 +120,7 @@ export default function App() {
   const { view } = useOcean();
 
   useEffect(() => {
-    if (!view) document.title = "TRAUMAATLAS 4 — Der Schwimmer im Meer der Phänomene";
+    if (!view) document.title = "TRAUMAATLAS 5 — Die Welle im Meer der Phänomene";
   }, [view]);
 
   return (
