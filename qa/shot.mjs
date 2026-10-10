@@ -258,6 +258,29 @@ try {
       await page.screenshot({ path: `${SHOTS}/welle-aus.png` });
     }
 
+    if (["dawn", "day", "dusk", "night"].includes(scenario)) {
+      // Tageszeit-Szenarien: Phase pinnen, Welle leicht aktiv, Kamera wach
+      const phases = { dawn: 0.27, day: 0.5, dusk: 0.74, night: 0.92 };
+      await page.evaluate(async () => {
+        const world = await import("/src/ocean/world.ts");
+        world.selectPhenomenon(null);
+      });
+      await page.mouse.move(700, 400);
+      await sleep(1400);
+      await page.evaluate((ph) => {
+        const d = window.__ta3day;
+        d.paused = true; d.phase = ph; d.resumeAt = 0;
+        const sw = window.__ta3swim;
+        const pk = window.__ta3pack;
+        pk.pinned = true;
+        pk.x = sw.x; pk.z = sw.z;
+        pk.dirX = Math.sin(sw.heading); pk.dirZ = -Math.cos(sw.heading);
+        pk.energy = 220; pk.amp = 0.62; pk.active = 1;
+      }, phases[scenario]);
+      await sleep(1300);
+      await page.screenshot({ path: `${SHOTS}/${scenario}.png` });
+    }
+
     if (scenario === "welle2") {
       // Zwei gepinnte Pakete kreuzen sich weit draußen (3D (0,27) ≈ Welt
       // (2600,2140) — >800 Welteinheiten von jeder Insel, keine Wildling-
@@ -289,6 +312,34 @@ try {
       await page.evaluate(() => { window.__ta3pack2.amp = 0; });
       await sleep(600);
       await page.screenshot({ path: `${SHOTS}/welle2-aus.png` });
+    }
+
+    if (scenario === "formen") {
+      // Leuchtform hautnah: Phänomen eingeben (neue Form entsteht), Karte
+      // schließen, Schwimmer in Sichtweite pinnen — Myzel-Fäden, Wirbel,
+      // Wasser-Färbung. Drei Phasen wegen Morph/Wirbel.
+      await page.fill("#ta3-phen-input", "Ich bin ständig erschöpft und voller Angst");
+      await page.press("#ta3-phen-input", "Enter");
+      await sleep(1800);
+      const schliessenF = page.getByRole("button", { name: "Schließen" });
+      if (await schliessenF.count()) { await schliessenF.first().click(); await sleep(500); }
+      await page.evaluate(() => {
+        const oc = window.__ta3ocean?.();
+        const ph = oc?.phenomena?.[0];
+        if (!ph) return;
+        const sw = window.__ta3swim;
+        // 3D: Phänomen-Position → Schwimmer 5 Einheiten südlich (Kamera schaut −z)
+        sw.x = (ph.x - 2600) * 0.02;
+        sw.z = (ph.y - 1600) * 0.02 + 5;
+        sw.vx = 0; sw.vz = 0;
+      });
+      await sleep(1800);
+      const schliessenF2 = page.getByRole("button", { name: "Schließen" });
+      for (const name of ["formen-0", "formen-1", "formen-2"]) {
+        if (await schliessenF2.count()) { await schliessenF2.first().click(); await sleep(500); }
+        await page.screenshot({ path: `${SHOTS}/${name}.png` });
+        await sleep(1300);
+      }
     }
 
     if (scenario === "island") {
