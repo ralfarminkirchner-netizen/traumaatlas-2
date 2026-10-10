@@ -342,6 +342,17 @@ try {
       }
     }
 
+    if (scenario === "ruhe") {
+      // Ruhe-Präsenz: Zeiger bleibt unbewegt — die Welle muss als atmender
+      // Buckel sichtbar bleiben (REST_AMP). Zwei Frames im Atemabstand.
+      const schliessenR = page.getByRole("button", { name: "Schließen" });
+      if (await schliessenR.count()) { await schliessenR.first().click(); await sleep(500); }
+      await page.screenshot({ path: `${SHOTS}/ruhe-0.png` });
+      await sleep(2000);
+      if (await schliessenR.count()) { await schliessenR.first().click(); await sleep(400); }
+      await page.screenshot({ path: `${SHOTS}/ruhe-1.png` });
+    }
+
     if (scenario === "island") {
       await page.mouse.move(720, 450);
       await page.mouse.wheel(0, -600);
