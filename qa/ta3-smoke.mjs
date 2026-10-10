@@ -107,12 +107,14 @@ async function runDesktop() {
   await page.press("#ta3-phen-input", "Enter");
   const phenCard = page.getByRole("dialog", { name: /Phänomen:/ });
   await phenCard.waitFor({ state: "visible", timeout: 8000 });
-  await page.waitForTimeout(900);
+  // Zeitlupen-Maschine: Karten-Animation (gestaffelte Brücken-Zeilen) abwarten,
+  // sonst klickt der Brücke-Button während des Layout-Shifts daneben (Canvas-Raycast)
+  await page.waitForTimeout(2500);
   await page.screenshot({ path: `${SHOTS}/01-phaenomen.png` });
   const bridge = phenCard.getByRole("button", { name: "Brücke öffnen" }).first();
   if (await bridge.count()) {
-    await bridge.click();
-    await page.waitForTimeout(500);
+    await bridge.click({ timeout: 90000 });
+    await page.waitForTimeout(1500);
     ok(await phenCard.getByText("verbunden").first().count() >= 1, "Brücke bestätigt (verbunden)");
   } else {
     console.log("INFO  keine offene Brücke (alle auto-bestätigt)");
