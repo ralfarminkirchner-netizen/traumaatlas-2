@@ -371,7 +371,9 @@ export const GraphScene = memo(function GraphScene({
       const sc = 1.18 * boost * (0.25 + 0.75 * node.dim) * Math.max(node.scaleNow, 0.001);
       sprite.scale.set(sc, sc, 1);
       const mat = sprite.material as THREE.SpriteMaterial;
-      const vis = node.scaleNow > 0.9 ? Math.min(1, node.dim * 1.2) : 0;
+      // Medaillons bleiben lesbar, auch wenn der Knoten gerade gedimmt ist —
+      // sonst wirken vorhandene Porträts wie „fehlende Bilder"
+      const vis = node.scaleNow > 0.9 ? Math.max(0.62, Math.min(1, node.dim * 1.2)) : 0;
       mat.opacity += (vis - mat.opacity) * Math.min(1, delta * 8);
     }
 

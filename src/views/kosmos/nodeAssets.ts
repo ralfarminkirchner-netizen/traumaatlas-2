@@ -17,6 +17,18 @@ import pfLevine from "@/assets/gen/med-pf-levine.png";
 import pfShapiro from "@/assets/gen/med-pf-shapiro.png";
 import pfHerman from "@/assets/gen/med-pf-herman.png";
 import pfLinehan from "@/assets/gen/med-pf-linehan.png";
+import pfFoa from "@/assets/gen/med-pf-foa.png";
+import pfNeuner from "@/assets/gen/med-pf-neuner.png";
+import pfOgden from "@/assets/gen/med-pf-ogden.png";
+import pfHeller from "@/assets/gen/med-pf-heller.png";
+import pfReddemann from "@/assets/gen/med-pf-reddemann.png";
+import pfSmucker from "@/assets/gen/med-pf-smucker.png";
+import pfGrand from "@/assets/gen/med-pf-grand.png";
+import pfCorrigan from "@/assets/gen/med-pf-corrigan.png";
+import pfSchwartz from "@/assets/gen/med-pf-schwartz.png";
+import pfYoung from "@/assets/gen/med-pf-young.png";
+import pfBerceli from "@/assets/gen/med-pf-berceli.png";
+import pfBesser from "@/assets/gen/med-pf-besser.png";
 
 /** nodeId → Porträt (URL) */
 export const PORTRAITS: Record<string, string> = {
@@ -35,6 +47,18 @@ export const PORTRAITS: Record<string, string> = {
   "m:se": pfLevine,
   "m:dbt": pfLinehan,
   "m:tsyoga": phVanderkolk,
+  "m:tfcbt": pfFoa,
+  "m:net": pfNeuner,
+  "m:sp": pfOgden,
+  "m:narm": pfHeller,
+  "m:pitt": pfReddemann,
+  "m:irrt": pfSmucker,
+  "m:brainspotting": pfGrand,
+  "m:dbr": pfCorrigan,
+  "m:egostate": pfSchwartz,
+  "m:schematherapie": pfYoung,
+  "m:tre": pfBerceli,
+  "m:krst": pfBesser,
 };
 
 /** Ids, für die echte Fotos vorliegen (Credits: portraits/credits.json). */
@@ -61,4 +85,16 @@ export const PORTRAIT_CREDITS: { id: string; name: string; source: string; licen
   { id: "m:emdr", name: "Francine Shapiro", source: "künstlerische Darstellung (kein brauchbares freies Foto)", license: "—" },
   { id: "herman", name: "Judith Herman", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
   { id: "m:dbt", name: "Marsha Linehan", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:tfcbt", name: "Edna Foa", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:net", name: "Neuner, Schauer, Elbert", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:sp", name: "Pat Ogden", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:narm", name: "Laurence Heller", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:pitt", name: "Luise Reddemann", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:irrt", name: "Smucker; Arntz", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:brainspotting", name: "David Grand", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:dbr", name: "Frank Corrigan", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:egostate", name: "Watkins; R. Schwartz (IFS)", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:schematherapie", name: "Jeffrey Young", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:tre", name: "David Berceli", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
+  { id: "m:krst", name: "Lutz Besser", source: "künstlerische Darstellung (kein freies Foto)", license: "—" },
 ];
