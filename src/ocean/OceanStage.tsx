@@ -19,6 +19,7 @@ import { IslandLabels3D } from "../ocean3d/IslandLabels3D";
 import { splat3D, projStore, screenToWater } from "../ocean3d/projStore";
 import { swimmer, driveKeys, mouseLook } from "../ocean3d/swimmer";
 import { scrubDay } from "../ocean3d/daynight";
+import { diveState, diveStage } from "../ocean3d/dive";
 import { WILDLINGS, wildState, catchWildling, wildProgress } from "../ocean/wildlife";
 import { w2x, w2z, x2w, z2w } from "../ocean3d/coords";
 import { seaBefund } from "@/kinformer/seaBefund";
@@ -702,6 +703,7 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
             ? `Entdeckt ${wildProgress().caught} / ${wildProgress().total}`
             : "Wildlinge treiben um die Inseln — geh ihnen nah"}
         </p>
+        <DiveHint />
       </div>
 
       <div className="pointer-events-auto flex flex-col items-end gap-2">
@@ -768,6 +770,25 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
 
 // ── Stage ────────────────────────────────────────────────────────────────────
 
+/** Tiefgang-Zeile: sichtbar nur beim Tauchen (150-ms-Blick in den diveState,
+ *  kein Re-Render-Sturm — setState nur bei echtem Wechsel). */
+function DiveHint() {
+  const [label, setLabel] = useState<string | null>(null);
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const l = diveState.sub > 0.08 ? `Tiefgang · ${diveStage(diveState.depth)}` : null;
+      setLabel((prev) => (prev === l ? prev : l));
+    }, 150);
+    return () => clearInterval(iv);
+  }, []);
+  if (!label) return null;
+  return (
+    <p className="mt-1 text-[10px] tracking-[0.25em] text-[#9fd8cf]/70" role="status" aria-live="polite">
+      {label} — loslassen zum Auftauchen
+    </p>
+  );
+}
+
 export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   const ocean = useOcean();
   const reduced = useReducedMotion();
@@ -782,8 +803,11 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   });
   const pendingIsland = useRef<IslandId | null>(null);
   const ambient = useRef({ t: 0, next: 0 });
+  const diveWheelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPress = useRef<{ timer: ReturnType<typeof setTimeout> | null; sx: number; sy: number; diving: boolean }>({ timer: null, sx: 0, sy: 0, diving: false });
 
-  // Tastatur-Fahrt: WASD/Pfeile (Third-Person-Rennspiel) — nie im Eingabefeld
+  // Tastatur-Fahrt: WASD/Pfeile (Third-Person-Rennspiel) — nie im Eingabefeld.
+  // Leertaste halten: Tauchgang (nur wenn keine Karte/kein Kapitel offen ist).
   useEffect(() => {
     if (!use3D) return;
     const map: Record<string, string> = {
@@ -794,13 +818,18 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       const t = e.target as HTMLElement;
       if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
       const k = map[e.key.toLowerCase()];
-      if (k) { driveKeys.add(k); e.preventDefault(); }
+      if (k) { driveKeys.add(k); e.preventDefault(); return; }
+      if (e.key === " " && !e.repeat) {
+        const s = getOceanState();
+        if (!s.selected && !s.view) { diveState.held = true; e.preventDefault(); }
+      }
     };
     const up = (e: KeyboardEvent) => {
       const k = map[e.key.toLowerCase()];
       if (k) driveKeys.delete(k);
+      if (e.key === " ") diveState.held = false;
     };
-    const blur = () => driveKeys.clear();
+    const blur = () => { driveKeys.clear(); diveState.held = false; };
     window.addEventListener("keydown", down);
     window.addEventListener("keyup", up);
     window.addEventListener("blur", blur);
@@ -809,6 +838,7 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", blur);
       driveKeys.clear();
+      diveState.held = false;
     };
   }, [use3D]);
 
@@ -917,8 +947,18 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         const p = pointer.current;
         // Zweiter Finger = zweite Welle: nur registrieren, keine Klick-/Drag-Logik
         if (e.pointerType === "touch") {
-          if (p.touch1 === null) p.touch1 = e.pointerId;
-          else if (p.touch2 === null && e.pointerId !== p.touch1) {
+          if (p.touch1 === null) {
+            p.touch1 = e.pointerId;
+            // Langer Druck = Tauchgang (Bewegung oder Loslassen bricht ab)
+            longPress.current.sx = e.clientX;
+            longPress.current.sy = e.clientY;
+            longPress.current.diving = false;
+            if (longPress.current.timer) clearTimeout(longPress.current.timer);
+            longPress.current.timer = setTimeout(() => {
+              longPress.current.diving = true;
+              diveState.held = true;
+            }, 550);
+          } else if (p.touch2 === null && e.pointerId !== p.touch1) {
             p.touch2 = e.pointerId;
             projStore.pointer2.cx = e.clientX;
             projStore.pointer2.cy = e.clientY;
@@ -945,6 +985,12 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
         }
         const dx = e.clientX - p.lx;
         const dy = e.clientY - p.ly;
+        // Bewegung bricht den langen Druck ab (Tauchgang aus, wenn noch nicht gestartet)
+        if (e.pointerType === "touch" && e.pointerId === p.touch1 && longPress.current.timer
+          && Math.hypot(e.clientX - longPress.current.sx, e.clientY - longPress.current.sy) > 9) {
+          clearTimeout(longPress.current.timer);
+          longPress.current.timer = null;
+        }
         const dtms = Math.max(now - p.pt, 8);
         const inst = Math.hypot(dx, dy) / dtms;
         p.speedEMA = p.speedEMA * 0.9 + inst * 0.1;
@@ -999,7 +1045,12 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
             projStore.pointer2.alive = false;
             return;
           }
-          if (e.pointerId === p.touch1) p.touch1 = null;
+          if (e.pointerId === p.touch1) {
+            p.touch1 = null;
+            // Langer Druck endet: Tauchgang aus (weiches Auftauchen übernimmt dive.ts)
+            if (longPress.current.timer) { clearTimeout(longPress.current.timer); longPress.current.timer = null; }
+            if (longPress.current.diving) { longPress.current.diving = false; diveState.held = false; }
+          }
         } else if ((e.buttons & 3) !== 3 && !e.metaKey) {
           projStore.pointer2.alive = false;
         }
@@ -1009,6 +1060,8 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       onPointerLeave: () => {
         projStore.pointer.alive = false;
         projStore.pointer2.alive = false;
+        if (longPress.current.timer) { clearTimeout(longPress.current.timer); longPress.current.timer = null; }
+        if (longPress.current.diving) { longPress.current.diving = false; diveState.held = false; }
       },
       // Klick aufs offene Wasser (3D): Schwimm-Ziel — Zeiger-Führung schlägt es sofort
       onClick: (e: React.MouseEvent) => {
@@ -1026,6 +1079,13 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       },
       onWheel: (e: React.WheelEvent) => {
         if (ocean.view) return;
+        // Cmd+Wheel: Tauchgang (gedrückt scrollen = tauchen, Ausrollen = auftauchen)
+        if (e.metaKey) {
+          diveState.held = true;
+          if (diveWheelTimer.current) clearTimeout(diveWheelTimer.current);
+          diveWheelTimer.current = setTimeout(() => { diveState.held = false; }, 450);
+          return;
+        }
         const c = ocean.cam;
         const factor = Math.exp(-e.deltaY * 0.0012);
         const nz = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, c.zoom * factor));

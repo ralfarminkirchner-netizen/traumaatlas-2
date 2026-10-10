@@ -10,6 +10,8 @@ import { w2x, w2z } from "./coords";
 import { waveHeight } from "./waves";
 import { projStore } from "./projStore";
 import { swimmer } from "./swimmer";
+import { diveState } from "./dive";
+import { depthAt } from "./seabed";
 
 const _pos = new THREE.Vector3();
 const _look = new THREE.Vector3();
@@ -94,6 +96,21 @@ export function CameraRig() {
       bob * 0.4,
       sm.z - Math.cos(yaw) * ahead * 8 - (1 - ovF) * 3.5,
     );
+
+    // Tauchgang: die Kamera sinkt weich UNTER die Oberfläche — Blick steil
+    // abwärts auf den Boden (Caustics, Gras, Tiefen-Knoten). Kein Ruck.
+    const sub = diveState.sub;
+    if (sub > 0.001) {
+      const e = THREE.MathUtils.smoothstep(sub, 0, 1);
+      const diveY = -0.5 - 2.0 * diveState.depth;
+      _pos.y = THREE.MathUtils.lerp(_pos.y, diveY, e);
+      // NIE durch den Boden: Kamera bleibt ≥ 0.55 über dem lokalen Grund
+      const floorY = -depthAt(_pos.x, _pos.z) + 0.55;
+      if (_pos.y < floorY) _pos.y = floorY;
+      _pos.z += 0.9 * e;
+      _look.y = THREE.MathUtils.lerp(_look.y, -6.5, e);
+      _look.z -= 2.2 * e;
+    }
 
     cam.position.copy(_pos);
     _m.lookAt(_pos, _look, _up);

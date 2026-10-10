@@ -10,6 +10,7 @@ import { useOcean, getOceanState } from "../ocean/world";
 import { waveHeight } from "./waves";
 import { swimmer, stepSwimmer, acceptPhenomenon, WakeEmitter } from "./swimmer";
 import { projStore, splat3D } from "./projStore";
+import { stepDive } from "./dive";
 import { w2x, w2z, x2w, z2w } from "./coords";
 
 export function Swimmer() {
@@ -28,6 +29,7 @@ export function Swimmer() {
 
     const { speed, field } = stepSwimmer(dt, t);
     wake.current.step(dt, speed);
+    stepDive(dt);
 
     // Feld-Atem: Sog = einströmende Ringe zwischen Welle und Phänomen,
     // Barriere = Gischt-Wall am Widerstand (Felder atmen mit den Wellen)

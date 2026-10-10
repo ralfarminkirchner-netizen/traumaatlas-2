@@ -258,8 +258,36 @@ try {
       await page.screenshot({ path: `${SHOTS}/welle-aus.png` });
     }
 
-    if (["dawn", "day", "dusk", "night"].includes(scenario)) {
-      // Tageszeit-Szenarien: Phase pinnen, Welle leicht aktiv, Kamera wach
+    if (scenario === "boden" || scenario === "tauchgang" || scenario === "tiefsee") {
+      // Meeresboden/Tauchgang: Schwimmer DIREKT auf die Kosmos-Untiefe setzen
+      // (Seegras, Fische, Caustics, Tiefen-Knoten in Kameranähe)
+      await page.evaluate(async () => {
+        const world = await import("/src/ocean/world.ts");
+        world.selectPhenomenon(null);
+        const co = await import("/src/ocean3d/coords.ts");
+        const sw = window.__ta3swim;
+        sw.x = co.w2x(2600); sw.z = co.w2z(640); // Kosmos-Platte
+        sw.vx = 0; sw.vz = 0;
+      });
+      await sleep(1600);
+      if (scenario !== "boden") {
+        await page.evaluate((deep) => {
+          const d = window.__ta3dive;
+          d.pinned = true; d.sub = 1; d.depth = deep;
+          if (deep < 1) { // tiefsee bleibt bei der aktuellen Phase (Nacht)
+            const day = window.__ta3day;
+            day.paused = true; day.phase = 0.5; day.resumeAt = 0; // Caustics bei Tag
+          }
+          const pk = window.__ta3pack;
+          pk.pinned = true; pk.amp = 0.5; pk.active = 1;
+          pk.x = window.__ta3swim.x; pk.z = window.__ta3swim.z;
+        }, scenario === "tiefsee" ? 1.0 : 0.55);
+      }
+      await sleep(1900);
+      await page.screenshot({ path: `${SHOTS}/${scenario}.png` });
+    }
+
+    if (["dawn", "day", "dusk", "night"].includes(scenario)) {      // Tageszeit-Szenarien: Phase pinnen, Welle leicht aktiv, Kamera wach
       const phases = { dawn: 0.27, day: 0.5, dusk: 0.74, night: 0.92 };
       await page.evaluate(async () => {
         const world = await import("/src/ocean/world.ts");

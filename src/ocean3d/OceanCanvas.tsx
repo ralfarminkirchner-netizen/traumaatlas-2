@@ -4,7 +4,7 @@
 
 import * as THREE from "three";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { ISLANDS } from "../ocean/world";
 import { w2x, w2z, x2w, z2w } from "./coords";
 import { projStore, registerScreenToWater } from "./projStore";
@@ -18,7 +18,14 @@ import { WakeRibbon } from "./WakeRibbon";
 import { Constellations3D } from "./Constellations3D";
 import { Swimmer } from "./SwimmerBody";
 import { Wildlife3D } from "./Wildlife3D";
+import { Seabed } from "./SeabedMesh";
+import { Seagrass } from "./Seagrass";
+import { Rocks } from "./Rocks";
+import { FishSchool } from "./FishSchool";
+import { Bubbles } from "./Bubbles";
+import { DeepNodes } from "./DeepNodes";
 import { dayState, stepDay, sampleDay, celestialDirAt } from "./daynight";
+import { diveState } from "./dive";
 
 const _v = new THREE.Vector3();
 const _ray = new THREE.Raycaster();
@@ -32,30 +39,38 @@ const _hit = new THREE.Vector3();
 function DayLightBridge() {
   const scene = useThree((s) => s.scene);
   const gl = useThree((s) => s.gl);
+  const _uwFog = useRef(new THREE.Color("#0b2c30"));
+  const _uwHemi = useRef(new THREE.Color("#1d4a4a"));
+  // QA-/Debug-Spiegel: die Szene am Window (Ausblend-Diagnose, Tiefen-Checks)
+  useEffect(() => {
+    (window as unknown as { __ta3scene?: THREE.Scene }).__ta3scene = scene;
+  }, [scene]);
   useFrame((_, delta) => {
     stepDay(Math.min(delta, 0.05));
     const pal = sampleDay(dayState.phase);
     celestialDirAt(dayState.phase, _v);
+    const sub = diveState.sub;
     const fog = scene.fog as THREE.FogExp2 | null;
     if (fog) {
-      fog.color.copy(pal.fog);
-      fog.density = pal.fogDensity;
+      // Unter Wasser: dichte, grünliche Wasserkörper-Dämpfung statt Luftnebel
+      fog.color.copy(pal.fog).lerp(_uwFog.current, sub);
+      fog.density = pal.fogDensity + (0.058 - pal.fogDensity) * sub;
     }
     const amb = scene.getObjectByName("day-amb") as THREE.AmbientLight | undefined;
-    if (amb) { amb.color.copy(pal.ambient); amb.intensity = pal.ambientI; }
+    if (amb) { amb.color.copy(pal.ambient).lerp(_uwHemi.current, sub * 0.6); amb.intensity = pal.ambientI; }
     const hemi = scene.getObjectByName("day-hemi") as THREE.HemisphereLight | undefined;
     if (hemi) {
-      hemi.color.copy(pal.hemiSky);
+      hemi.color.copy(pal.hemiSky).lerp(_uwHemi.current, sub * 0.7);
       hemi.groundColor.copy(pal.hemiGround);
       hemi.intensity = pal.hemiI;
     }
     const dir = scene.getObjectByName("day-dir") as THREE.DirectionalLight | undefined;
     if (dir) {
       dir.color.copy(pal.celestial);
-      dir.intensity = pal.dirI;
+      dir.intensity = pal.dirI * (1 - 0.55 * sub);
       dir.position.copy(_v).multiplyScalar(65);
     }
-    gl.toneMappingExposure = pal.exposure;
+    gl.toneMappingExposure = pal.exposure * (1 - 0.12 * sub);
   });
   return null;
 }
@@ -127,6 +142,12 @@ export function OceanCanvas({ mobile = false }: { mobile?: boolean }) {
       <LabelsBridge />
       <ScreenToWaterBridge />
       <SkyDome />
+      <Seabed />
+      <Seagrass />
+      <Rocks />
+      <FishSchool />
+      <Bubbles />
+      <DeepNodes />
       <OceanWater mobile={mobile} />
       <Swimmer />
       <Wildlife3D />

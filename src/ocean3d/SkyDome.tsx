@@ -6,6 +6,7 @@ import { useMemo } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
 import { dayState, stepDay, sampleDay, celestialDirAt } from "./daynight";
+import { diveState } from "./dive";
 
 const SKY_VERT = /* glsl */ `
 varying vec3 vDir;
@@ -27,6 +28,7 @@ uniform float uStars;     // 0..1 Sterne (nur nachts)
 uniform float uSunDisc;   // 0..1 Sonnenscheibe (nur tagsüber)
 uniform float uClouds;    // 0..1 Wolkenschleier (tagsüber)
 uniform float uLowSun;    // 1 am Horizont — Abendrot/Morgengrau-Verstärker
+uniform float uMurk;      // 0..1 Unterwasser-Trübung (Tauchgang): Himmel erlischt
 
 varying vec3 vDir;
 
@@ -101,6 +103,10 @@ void main() {
   // Dithering gegen Farbbänder im Verlauf
   col += (hash21(d.xy * 913.7 + d.z * 517.3) - 0.5) * 0.012;
 
+  // Tauchgang: der Himmel erlischt in Wasserkörper-Trübung — die Oberfläche
+  // (und ihr Snell-Glanz) übernimmt der Wasser-Shader selbst
+  col = mix(col, vec3(0.043, 0.173, 0.188), uMurk * 0.92);
+
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -133,6 +139,7 @@ export function SkyDome() {
           uSunDisc: { value: 0 },
           uClouds: { value: 0.12 },
           uLowSun: { value: 0 },
+          uMurk: { value: 0 },
         },
       }),
     [],
@@ -155,6 +162,8 @@ export function SkyDome() {
     u.uClouds.value = pal.clouds;
     // Abendrot/Morgengrau: Glühen öffnet, wenn die Quelle tief steht
     u.uLowSun.value = 1 - THREE.MathUtils.smoothstep(Math.abs(_dir.y), 0.02, 0.3);
+    // Tauchgang: Himmel erlischt in Trübung (unter Wasser kein Tageshimmel)
+    u.uMurk.value = diveState.sub;
   });
 
   return <mesh geometry={geo} material={material} frustumCulled={false} renderOrder={-10} name="sky-dome" />;

@@ -10,6 +10,7 @@ import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
 import { dayState, sampleDay, celestialDirAt } from "./daynight";
+import { DEPTH_GLSL, getDepthTexture } from "./seabed";
 import { ISLANDS } from "../ocean/world";
 
 // ── Shader ───────────────────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ uniform vec3 uBuoyColor[14];
 uniform int uBuoyCount;
 
 ${PACKET_GLSL}
+${DEPTH_GLSL}
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
@@ -134,6 +136,7 @@ vec2 ngrad(vec2 p) {
 
 void main() {
   vec3 V = normalize(cameraPosition - vWorldPos);
+  bool UNDER = cameraPosition.y < 0.0;
 
   // Detail-Normals: zwei scrollende Noise-Oktaven, mit Distanz abklingend
   float dist = length(cameraPosition - vWorldPos);
@@ -179,13 +182,16 @@ void main() {
   vec2 ruvRaw = vRefl.xy / max(vRefl.w, 1e-4);
   ruvRaw += N.xz * 0.034;
   vec2 inEdge = smoothstep(0.0, 0.05, ruvRaw) * (1.0 - smoothstep(0.95, 1.0, ruvRaw));
-  float reflMask = inEdge.x * inEdge.y;
+  float reflMask = inEdge.x * inEdge.y * (UNDER ? 0.0 : 1.0); // unter Wasser kein Himmelsspiegel
   vec2 ruv = clamp(ruvRaw, vec2(0.002), vec2(0.998));
   vec3 refl = texture2D(tReflect, ruv).rgb;
 
-  // Tiefe/Untiefe: Kämme heller, Täler schwarzblau
+  // Tiefe/Untiefe: Kämme heller, Täler schwarzblau — und jetzt auch echt
+  // bathymetrisch: Untiefen um die Inseln heller, offene See dunkel
+  float wdepth = depthAtWorld(vWorldPos.xz);
+  float shallowF = exp(-wdepth * 0.2);
   float heightMix = clamp(vWorldPos.y * 1.4 + 0.35, 0.0, 1.0);
-  vec3 waterBody = mix(uDeepColor, uShallowColor, heightMix * 0.55);
+  vec3 waterBody = mix(uDeepColor, uShallowColor, clamp(heightMix * 0.55 * 0.6 + shallowF * 0.55, 0.0, 1.0));
 
   // Wasserkörper + Reflexion über Fresnel; leichter Indigo-Ambientlift,
   // damit die Schattenseite nie zu Plastik-Schwarz kippt.
@@ -257,6 +263,20 @@ void main() {
     + crestBand2 * crestBand2 * smoothstep(0.58, 0.95, p2Amp)) * (0.4 + 0.6 * foamN);
   float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.4);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
+
+  // ── Die Oberfläche VON UNTEN ──
+  // Gedämpftes grünes Gewölbe: Snell-Fenster Richtung Lichtquelle, der Glanz
+  // der eigenen Welle scheint durch, keine Reflexion, kein Kamm-Schaum.
+  if (!gl_FrontFacing) {
+    vec3 under = uDeepColor * 0.5 + uShallowColor * 0.22;
+    float snell = pow(max(dot(-V, uMoonDir), 0.0), 5.0);
+    under += uMoonColor * snell * 0.55;
+    under += uMoonColor * crestBand * 0.32;
+    under += uShallowColor * (pfenv + pf2env) * 0.16;
+    // das Lichtfeld der Phänomene schimmert von oben durch
+    under += min(field, vec3(1.2)) * 0.35;
+    col = under;
+  }
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -388,12 +408,14 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
       vertexShader: VERT,
       fragmentShader: FRAG,
       fog: true,
+      side: THREE.DoubleSide, // Oberfläche auch von unten (Tauchgang)
       uniforms: THREE.UniformsUtils.merge([
         THREE.UniformsLib.fog,
         {
           uTime: { value: 0 },
           uCalm: { value: 0 },
           tReflect: { value: rt.texture },
+          tDepth: { value: getDepthTexture() },
           uTextureMatrix: { value: texMatrix },
           uMoonDir: { value: new THREE.Vector3(-0.46, 0.061, -0.885).normalize() },
           uMoonColor: { value: new THREE.Color("#f7e7c2") },
