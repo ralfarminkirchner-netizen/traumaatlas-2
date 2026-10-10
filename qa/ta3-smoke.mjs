@@ -50,12 +50,19 @@ const CHAPTERS = [
   // Baukasten zuletzt: verändert das Programm (Wechsel-Vorschau braucht leeres Programm)
   ["baukasten", "Programm-Baukasten"],
 ];
+// Zeitlupen-Maschine: Tour ab Index N fortsetzen (zwei Läufe à < 5 min,
+// gemeinsam volle Abdeckung) — TA3_SMOKE_FROM=5 deckt lexikon..baukasten ab.
+const CHAPTERS_FROM = Number(process.env.TA3_SMOKE_FROM || 0);
 
 let failures = 0;
 const ok = (cond, label) => {
   console.log(`${cond ? "PASS" : "FAIL"}  ${label}`);
   if (!cond) failures++;
 };
+
+// Zeitlupen-Klick für animierte Karten: auf Maschinen mit ~5-fps-rAF brauchen
+// Stabilitätsprüfungen sehr lange — lieber geduldig warten als fehlklicken.
+const calmClick = (loc) => loc.click({ timeout: 90000 });
 
 async function gotoSea(page) {
   await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 90000 });
@@ -120,7 +127,7 @@ async function runDesktop() {
     console.log("INFO  keine offene Brücke (alle auto-bestätigt)");
   }
   await page.screenshot({ path: `${SHOTS}/02-bruecke.png` });
-  await phenCard.getByRole("button", { name: "Schließen" }).click();
+  await calmClick(phenCard.getByRole("button", { name: "Schließen" }));
   await page.waitForTimeout(400);
 
   // ── 3D-Checks: Bojen-Raycast → Brückenkarte, Übersichts-Zoom, Insel-Label ──
@@ -138,7 +145,7 @@ async function runDesktop() {
     ok(!!sel, "3D: Boje-Klick selektiert Phänomen (Raycast)");
     ok(await phenCard.count() >= 1, "3D: Brückenkarte nach Boje-Klick sichtbar");
     await page.screenshot({ path: `${SHOTS}/03-boje-karte.png` });
-    await phenCard.getByRole("button", { name: "Schließen" }).click();
+    await calmClick(phenCard.getByRole("button", { name: "Schließen" }));
     await page.waitForTimeout(400);
   }
 
@@ -161,7 +168,7 @@ async function runDesktop() {
   await closeChapter(page);
 
   // Alle Kapitel durchsegeln
-  for (const [id, title] of CHAPTERS) {
+  for (const [id, title] of CHAPTERS.slice(CHAPTERS_FROM)) {
     const dialog = await openChapter(page, id, title);
     ok(await dialog.count() === 1, `Kapitel offen: ${title}`);
     await page.screenshot({ path: `${SHOTS}/kap-${id}.png` });
@@ -194,7 +201,7 @@ async function runDesktop() {
         const ov2 = page.getByRole("dialog", { name: /Element:/ });
         await ov2.waitFor({ state: "visible", timeout: 5000 });
         await page.screenshot({ path: `${SHOTS}/kap-wechsel-element.png` });
-        await ov2.getByRole("button", { name: "Schließen" }).click();
+        await ov2.getByRole("button", { name: "Schließen" }).click({ timeout: 90000 });
         // Tastatur: Fokus + Enter öffnet ebenfalls
         const node2 = dialog.locator("g[role='button'][aria-label*='(Baustein)']").first();
         await node2.focus();
@@ -202,7 +209,7 @@ async function runDesktop() {
         const ov3 = page.getByRole("dialog", { name: /Element:/ });
         await ov3.waitFor({ state: "visible", timeout: 5000 });
         ok(true, "Wechsel: Knoten per Tastatur (Enter) öffnbar");
-        await ov3.getByRole("button", { name: "Schließen" }).click();
+        await ov3.getByRole("button", { name: "Schließen" }).click({ timeout: 90000 });
       } else {
         ok(false, "Wechsel: Netz-Knoten klickbar");
       }
