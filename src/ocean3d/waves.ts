@@ -167,11 +167,14 @@ export const PACKET_PROFILE = {
   /** Wellenlänge der Trägerwelle (Welteinheiten) — ≥ 4 Vertices pro Periode */
   LEN: 10.0,
   /** Hüllkurven-Breite entlang der Fahrtrichtung (kurzer Wellenzug) */
-  SIGMA_U: 7.6,
-  /** Hüllkurven-Breite quer (die Kammlinie trägt seitlich aus) */
-  SIGMA_V: 11.0,
+  SIGMA_U: 4.4,
+  /** Hüllkurven-Breite quer — SCHMAL: die Spitze ist eine Kammlinie,
+   *  keine breite Schwellung */
+  SIGMA_V: 3.4,
   /** Steilheitsparameter der Horizontalverdrängung (Jacobi; < 1/(k·A_max) = 1.18) */
   Q: 1.05,
+  /** Zusatz-Rollfaktor bei voller Beschleunigung (der Kamm kippt vor) */
+  Q_ACCEL: 0.45,
   /** eigene Zeitdehnung — lebendiger als das Meer (0.16), würdevoller als echt */
   DILATION: 0.55,
   /** Amplituden-Gewinn: A = GAIN · √(2E), E = ½v² → A ∝ v */
@@ -187,6 +190,12 @@ export const PACKET_PROFILE = {
   DECAY: 1.1,
   /** Jacobi-Schwelle: darunter bricht die Welle (Weißkapsel + Gischt) */
   BREAK_J: 0.42,
+  /** Schneise: Spurpunkte, Kanalbreite, Zerfallszeit, Muldentiefe, Schrittweite */
+  TRAIL_COUNT: 18,
+  TRAIL_SIGMA: 1.35,
+  TRAIL_TAU: 4.2,
+  TRAIL_DEPTH: 0.34,
+  TRAIL_STEP: 0.14,
 } as const;
 
 /**
@@ -200,6 +209,8 @@ export const packetState = {
   dirZ: -1,
   energy: 0,
   amp: 0,
+  /** Rollfaktor ≥ 1: Beschleunigung kippt den Kamm vor (uPackC.y = Q·roll) */
+  roll: 1,
   len: PACKET_PROFILE.LEN,
   sigmaU: PACKET_PROFILE.SIGMA_U,
   sigmaV: PACKET_PROFILE.SIGMA_V,
@@ -219,6 +230,8 @@ export const packet2State = {
   dirZ: -1,
   energy: 0,
   amp: 0,
+  /** Rollfaktor ≥ 1: Beschleunigung kippt den Kamm vor */
+  roll: 1,
   len: PACKET_PROFILE.LEN,
   sigmaU: PACKET_PROFILE.SIGMA_U,
   sigmaV: PACKET_PROFILE.SIGMA_V,
@@ -347,6 +360,68 @@ if (typeof window !== "undefined") {
   const w = window as unknown as { __ta3pack?: typeof packetState; __ta3pack2?: typeof packet2State };
   w.__ta3pack = packetState;
   w.__ta3pack2 = packet2State;
+}
+
+// ── Die Schneise (Wake-Trail) ────────────────────────────────────────────────
+// Die Welle drückt ihre Richtung ins Wasser: eine schmale Mulde entlang der
+// gefahrenen Spur mit vergehender Gischt. Spurpunkte (jüngste zuerst) werden
+// aus stepPacket gespeist; Gewicht = normierte Amplitude · e^(-Alter/τ).
+// CPU- und GPU-Seite MÜSSEN deckungsgleich bleiben (TRAIL_GLSL spiegelt
+// trailDisplacement).
+
+export interface TrailPoint { x: number; z: number; amp: number; t: number }
+
+export const trail: TrailPoint[] = [];
+
+export function pushTrail(x: number, z: number, amp: number, t: number) {
+  trail.unshift({ x, z, amp, t });
+  if (trail.length > PACKET_PROFILE.TRAIL_COUNT) trail.pop();
+}
+
+/** Mulden-Tiefe (negativ) + Gischt-Gewicht der Schneise an (x,z) zur Zeit t. */
+export function trailDisplacement(x: number, z: number, t: number): { h: number; foam: number } {
+  let h = 0;
+  let foam = 0;
+  const P = PACKET_PROFILE;
+  for (const tp of trail) {
+    const age = t - tp.t;
+    if (age < 0 || age > 12) continue;
+    const w = tp.amp * Math.exp(-age / P.TRAIL_TAU);
+    if (w < 0.01) continue;
+    const dx = x - tp.x;
+    const dz = z - tp.z;
+    const d2 = dx * dx + dz * dz;
+    const g = Math.exp(-d2 / (P.TRAIL_SIGMA * P.TRAIL_SIGMA));
+    h -= w * P.TRAIL_DEPTH * g;
+    foam += w * g;
+  }
+  return { h, foam };
+}
+
+/** GLSL: Uniform + Funktion, exakte Spiegelung der CPU-Mathematik oben.
+ *  uTrail[i] = x, z, amp·decay (pro Frame CPU-seitig vorgerechnet), frei. */
+export const TRAIL_GLSL = /* glsl */ `
+uniform vec4 uTrail[${PACKET_PROFILE.TRAIL_COUNT}];
+
+// Die Schneise: schmale Mulde entlang der Spur (negativ) + Gischt-Gewicht.
+float trailHeight(vec2 xz, out float foam) {
+  float h = 0.0;
+  foam = 0.0;
+  for (int i = 0; i < ${PACKET_PROFILE.TRAIL_COUNT}; i++) {
+    vec4 tp = uTrail[i];
+    if (tp.z < 0.01) continue;
+    vec2 d = xz - tp.xy;
+    float g = exp(-dot(d, d) / ${(PACKET_PROFILE.TRAIL_SIGMA * PACKET_PROFILE.TRAIL_SIGMA).toFixed(4)});
+    h -= tp.z * ${PACKET_PROFILE.TRAIL_DEPTH} * g;
+    foam += tp.z * g;
+  }
+  return h;
+}
+`;
+
+// QA-/Debug-Spiegel: Schneise am Window lesbar (Probes, shot.mjs)
+if (typeof window !== "undefined") {
+  (window as unknown as { __ta3trail?: typeof trail }).__ta3trail = trail;
 }
 
 // ── GLSL ─────────────────────────────────────────────────────────────────────

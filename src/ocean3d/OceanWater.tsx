@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
-import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKET_PROFILE, bodyState, packetState, packet2State, packetOmega } from "./waves";
+import { GERSTNER_GLSL, RIPPLE_COUNT, RIPPLE_GLSL, BODY_GLSL, PACKET_GLSL, PACKET_PROFILE, TRAIL_GLSL, bodyState, packetState, packet2State, packetOmega, trail } from "./waves";
 import { registerRipple3D } from "./projStore";
 import { w2x, w2z, S } from "./coords";
 import { projStore } from "./projStore";
@@ -20,6 +20,7 @@ ${GERSTNER_GLSL}
 ${RIPPLE_GLSL}
 ${BODY_GLSL}
 ${PACKET_GLSL}
+${TRAIL_GLSL}
 
 uniform mat4 uTextureMatrix;
 
@@ -28,6 +29,7 @@ varying vec3 vNormal;
 varying vec4 vRefl;
 varying float vCrest;
 varying float vRingFoam;
+varying float vTrailFoam;
 
 #include <fog_pars_vertex>
 
@@ -69,10 +71,17 @@ void main() {
   nrm = normalize(vec3(nrm.x - p2grad.x, nrm.y, nrm.z - p2grad.y));
   crest = max(crest, smoothstep(0.62, 0.30, p2j));
 
+  // Die Schneise: die Welle drückt eine schmale Mulde mit vergehender
+  // Gischt ins Wasser — die Richtung bleibt lesbar, bis sie zerfällt.
+  float tfoam;
+  float th = trailHeight(position.xz, tfoam);
+  p.y += th;
+
   vWorldPos = p;
   vNormal = nrm;
   vCrest = crest;
   vRingFoam = ringFoam;
+  vTrailFoam = tfoam;
   vRefl = uTextureMatrix * vec4(p, 1.0);
 
   vec4 mvPosition = modelViewMatrix * vec4(p, 1.0);
@@ -102,12 +111,14 @@ uniform int uBuoyCount;
 
 ${PACKET_GLSL}
 ${DEPTH_GLSL}
+${TRAIL_GLSL}
 
 varying vec3 vWorldPos;
 varying vec3 vNormal;
 varying vec4 vRefl;
 varying float vCrest;
 varying float vRingFoam;
+varying float vTrailFoam;
 
 #include <fog_pars_fragment>
 
@@ -439,6 +450,7 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uPack2A: { value: new THREE.Vector4(0, 0, 0, -1) },
           uPack2B: { value: new THREE.Vector4(0, 1, PACKET_PROFILE.SIGMA_U, PACKET_PROFILE.SIGMA_V) },
           uPack2C: { value: new THREE.Vector2(packetOmega(), PACKET_PROFILE.Q) },
+          uTrail: { value: Array.from({ length: PACKET_PROFILE.TRAIL_COUNT }, () => new THREE.Vector4(0, 0, 0, 0)) },
         },
       ]),
     });
@@ -522,6 +534,20 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     );
     const uP2C = mat.uniforms.uPack2C.value as THREE.Vector2;
     uP2C.set(packetOmega(packet2State.len), PACKET_PROFILE.Q);
+
+    // Schneise: Spurpunkte CPU-seitig zerfallen lassen → amp·decay je Uniform
+    const uT = mat.uniforms.uTrail.value as THREE.Vector4[];
+    const tau = PACKET_PROFILE.TRAIL_TAU;
+    for (let i = 0; i < PACKET_PROFILE.TRAIL_COUNT; i++) {
+      const tp = trail[i];
+      if (tp) {
+        const age = mat.uniforms.uTime.value - tp.t;
+        const w = age >= 0 && age <= 12 ? tp.amp * Math.exp(-age / tau) : 0;
+        uT[i].set(tp.x, tp.z, w < 0.01 ? 0 : w, 0);
+      } else {
+        uT[i].set(0, 0, 0, 0);
+      }
+    }
 
     // Stille beruhigt die Wellen (weich gedämpft)
     const target = projStore.calm;

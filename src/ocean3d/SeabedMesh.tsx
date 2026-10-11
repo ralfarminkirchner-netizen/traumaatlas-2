@@ -6,7 +6,7 @@
 import { useMemo } from "react";
 import * as THREE from "three";
 import { useFrame } from "@react-three/fiber";
-import { depthAt, getDepthTexture, SHALLOW_MAX, WORLD_EXTENT } from "./seabed";
+import { depthAt, SHALLOW_MAX, WORLD_EXTENT } from "./seabed";
 import { dayState, sampleDay, celestialDirAt } from "./daynight";
 import { diveState } from "./dive";
 

@@ -117,7 +117,6 @@ export function FishSchool() {
   const _m = useRef(new THREE.Matrix4());
   const _q = useRef(new THREE.Quaternion());
   const _dir = useRef(new THREE.Vector3());
-  const _up = useRef(new THREE.Vector3(0, 1, 0));
   const _scale = useRef(new THREE.Vector3(1, 1, 1));
   const _p = useRef(new THREE.Vector3());
 

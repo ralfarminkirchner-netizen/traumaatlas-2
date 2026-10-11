@@ -9,7 +9,7 @@
 
 import { getOceanState, setOcean } from "../ocean/world";
 import { w2x, w2z } from "./coords";
-import { bodyState, waveHeight, packetState, packet2State, packetOmega, wavePacket, wavePacket2, PACKET_PROFILE } from "./waves";
+import { bodyState, waveHeight, packetState, packet2State, packetOmega, wavePacket, wavePacket2, pushTrail, PACKET_PROFILE } from "./waves";
 import { projStore, screenToWater, splat3D } from "./projStore";
 import { x2w, z2w } from "./coords";
 
@@ -185,6 +185,12 @@ let _prevH = 0;
 let _shedAcc = 0;
 let _lastRingT = -1e9;
 let _lastSprayT = -1e9;
+let _ePrev = 0;
+let _rollSm = 1;
+let _lastTrailT = -1e9;
+let _ePrev2 = 0;
+let _rollSm2 = 1;
+let _lastTrail2T = -1e9;
 
 export function stepPacket(dt: number, t: number, speed: number, inactive: boolean) {
   const pk = packetState;
@@ -215,11 +221,25 @@ export function stepPacket(dt: number, t: number, speed: number, inactive: boole
     _shedAcc += shed;
     pk.shedTotal += shed;
   }
+  // Rollen bei Beschleunigung: dE/dt kippt den Kamm zusätzlich vor (roll > 1),
+  // in ruhiger Fahrt fällt der Faktor sanft auf 1 zurück
+  const dE = Math.max(0, (pk.energy - _ePrev) / Math.max(dt, 1e-4));
+  _ePrev = pk.energy;
+  const rollTarget = 1 + P.Q_ACCEL * Math.min(1, dE / 500);
+  _rollSm += (rollTarget - _rollSm) * (1 - Math.exp(-4 * dt));
+  pk.roll = _rollSm;
+
   // Amplitude: Energie-Fahrt — aber nie unter der atmenden Ruhe-Präsenz:
   // auch im Stand bleibt die Welle ein lebendiger, atmender Buckel.
   const breath = P.REST_AMP * (0.72 + 0.28 * Math.sin(t * 0.55));
   pk.amp = Math.max(breath * swimmer.smActive, Math.min(P.MAX_AMP, P.GAIN * Math.sqrt(2 * Math.max(pk.energy, 0))));
   pk.active = swimmer.smActive;
+
+  // Schneise: die Welle drückt ihre Richtung ins Wasser (gedrosselte Spurpunkte)
+  if (pk.amp > 0.28 && pk.active > 0.4 && t - _lastTrailT > P.TRAIL_STEP) {
+    _lastTrailT = t;
+    pushTrail(pk.x, pk.z, Math.min(1, pk.amp / P.MAX_AMP), t);
+  }
 
   // Ringwellen-Train: abgebremste Energie läuft als Ringe aus (gedrosselt)
   if (_shedAcc > 55 && t - _lastRingT > 0.35) {
@@ -308,11 +328,24 @@ export function stepPacket2(dt: number, t: number, inactive: boolean) {
     _shedAcc2 += shed;
     pk.shedTotal += shed;
   }
+  // Rollen bei Beschleunigung (wie Paket 1)
+  const dE2 = Math.max(0, (pk.energy - _ePrev2) / Math.max(dt, 1e-4));
+  _ePrev2 = pk.energy;
+  const rollTarget2 = 1 + P.Q_ACCEL * Math.min(1, dE2 / 500);
+  _rollSm2 += (rollTarget2 - _rollSm2) * (1 - Math.exp(-4 * dt));
+  pk.roll = _rollSm2;
+
   // Amplitude: Energie-Fahrt — aber nie unter der atmenden Ruhe-Präsenz,
   // sobald der zweite Zeiger lebt (Aktiv-Blende trägt die Atmung)
   const breath2 = P.REST_AMP * (0.72 + 0.28 * Math.sin(t * 0.55 + 1.3));
   pk.amp = Math.max(breath2 * _act2, Math.min(P.MAX_AMP, P.GAIN * Math.sqrt(2 * Math.max(pk.energy, 0))));
   pk.active = _act2;
+
+  // Schneise (gedrosselte Spurpunkte, geteilter Trail mit Paket 1)
+  if (pk.amp > 0.28 && pk.active > 0.4 && t - _lastTrail2T > P.TRAIL_STEP) {
+    _lastTrail2T = t;
+    pushTrail(pk.x, pk.z, Math.min(1, pk.amp / P.MAX_AMP), t);
+  }
 
   // Ringwellen-Train beim Loslassen (gedrosselt)
   if (_shedAcc2 > 55 && t - _lastRing2T > 0.35) {

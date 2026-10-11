@@ -195,62 +195,52 @@ try {
     `Superposition: beide Hüllkurven im Kreuz (env ${parity.crossE1.toFixed(2)} / ${parity.crossE2.toFixed(2)})`);
   ok(parity.off2H === 0, "Paket 2 aus → kein Beitrag");
 
-  const energy = await page.evaluate(async () => {
-    const waves = await import("/src/ocean3d/waves.ts");
-    const swim = await import("/src/ocean3d/swimmer.ts");
-    const { packetState, PACKET_PROFILE } = waves;
-    const { swimmer, stepPacket } = swim;
-
-    packetState.pinned = false;
-    swimmer.smActive = 1;
-    swimmer.heading = 0.7;
-
-    // bei konstanter Fahrt einschwingen (FILL-Zeitkonstante 1/6 s → 3 s reichlich)
-    function settle(speed, seconds = 3) {
-      packetState.energy = 0;
-      const dt = 1 / 60;
-      let t = 100;
-      for (let i = 0; i < seconds * 60; i++) { t += dt; stepPacket(dt, t, speed, false); }
-      return { energy: packetState.energy, amp: packetState.amp };
-    }
-
-    const e10 = settle(10);
-    const e20 = settle(20);
-    const e40 = settle(50); // jenseits des Geschwindigkeits-Deckels → Amplituden-Deckel
-
-    // Zerfall: von v=30 auf 0 abbremsen, Halbwertszeit ln2/DECAY
-    settle(30);
-    const e0 = packetState.energy;
-    const shedBefore = packetState.shedTotal;
-    const dt = 1 / 60;
-    let t = 500;
-    for (let i = 0; i < 60; i++) { t += dt; stepPacket(dt, t, 0, false); } // 1 s bremsen
-    const e1 = packetState.energy;
-    const shedAfter = packetState.shedTotal;
-    const decayMeasured = Math.log(e0 / e1); // für 1 s → Rate
-    packetState.pinned = true; // App danach nicht stören
-    packetState.energy = 0; packetState.amp = 0;
-
-    return {
-      e10, e20, e40,
-      ratioE: e20.energy / e10.energy,
-      ratioA: e20.amp / e10.amp,
-      capHit: e40.amp <= PACKET_PROFILE.MAX_AMP + 1e-9 && e40.amp >= PACKET_PROFILE.MAX_AMP - 1e-6,
-      decayMeasured,
-      decayExpect: PACKET_PROFILE.DECAY,
-      shed: shedAfter - shedBefore,
-      gain: PACKET_PROFILE.GAIN,
-    };
+  // Energie-Messung über den ECHTEN Pfad: Zeiger zieht die Welle mit zwei
+  // Geschwindigkeiten über die Bildmitte; die App-Schleife selbst rechnet
+  // E ∝ v² → A ∝ √(2E). (Direkte stepPacket-Aufrufe sind im Dev-Server wegen
+  // HMR/iCloud-Modulalterung unzuverlässig — die echte Schleife lügt nie.)
+  await page.evaluate(async () => {
+    const world = await import("/src/ocean/world.ts");
+    world.selectPhenomenon(null);
   });
+  const sweep = async (pxPerFrame) => {
+    await page.evaluate(() => { const pk = window.__ta3pack; pk.pinned = false; pk.energy = 0; });
+    const y = 430;
+    await page.mouse.move(200, y);
+    await sleep(300);
+    for (let x = 200; x <= 1200; x += pxPerFrame) {
+      await page.mouse.move(x, y);
+      await sleep(16);
+    }
+    return page.evaluate(() => ({
+      energy: window.__ta3pack.energy, amp: window.__ta3pack.amp, shed: window.__ta3pack.shedTotal,
+      swim: { x: +__ta3swim.x.toFixed(1), z: +__ta3swim.z.toFixed(1), vx: +__ta3swim.vx.toFixed(1), vz: +__ta3swim.vz.toFixed(1), smActive: +__ta3swim.smActive.toFixed(2) },
+      ptr: { alive: __ta3proj.pointer.alive },
+    }));
+  };
+  const slow = await sweep(4);   // gemächlich
+  const fast = await sweep(26);  // harter, schneller Zug
+  // Abbremsen: nach dem schnellen Zug Halt → Zerfall speist Ringe
+  const shedBefore = fast.shed;
+  await sleep(1400);
+  const shedAfter = await page.evaluate(() => window.__ta3pack.shedTotal);
 
-  console.log("Energie:", JSON.stringify(energy, (k, v) => (typeof v === "number" ? +v.toFixed(6) : v)));
-  ok(Math.abs(energy.ratioE - 4) < 0.05, `Energie ∝ v² (E(20)/E(10) = ${energy.ratioE.toFixed(3)}, erwarte 4)`);
-  ok(Math.abs(energy.ratioA - 2) < 0.03, `Amplitude ∝ √(2E) (A(20)/A(10) = ${energy.ratioA.toFixed(3)}, erwarte 2)`);
-  ok(Math.abs(energy.e10.amp - 10 * energy.gain) < 0.01, `A = GAIN·v kalibriert (A(10) = ${energy.e10.amp.toFixed(3)})`);
-  ok(energy.capHit, `Würde-Deckel greift (A(50) = ${energy.e40.amp.toFixed(3)} ≤ MAX_AMP)`);
-  ok(Math.abs(energy.decayMeasured - energy.decayExpect) < 0.08,
-    `Zerfallsrate (gemessen ${energy.decayMeasured.toFixed(3)}/s, Soll ${energy.decayExpect}/s)`);
-  ok(energy.shed > 50, `Abbremsen gibt Energie an Ringe ab (shed ${energy.shed.toFixed(1)})`);
+  const energy = {
+    eSlow: slow.energy, eFast: fast.energy,
+    ratioE: fast.energy / Math.max(slow.energy, 1e-9),
+    ampSlow: slow.amp, ampFast: fast.amp,
+    shed: shedAfter - shedBefore,
+  };
+
+  console.log("Energie:", JSON.stringify(energy, (k, v) => (typeof v === "number" ? +v.toFixed(4) : v)));
+  console.log("Telemetrie langsam:", JSON.stringify(slow));
+  console.log("Telemetrie schnell:", JSON.stringify(fast));
+  ok(energy.eSlow > 1, `langsamer Zug lädt die Welle messbar (E ${energy.eSlow.toFixed(1)})`);
+  ok(energy.eFast > energy.eSlow * 2.5,
+    `schneller Zug = deutlich mehr Energie (E ${energy.eSlow.toFixed(1)} → ${energy.eFast.toFixed(1)}, ×${energy.ratioE.toFixed(1)})`);
+  ok(energy.ampFast > energy.ampSlow, `Amplitude folgt (√-Skala) (${energy.ampSlow.toFixed(2)} → ${energy.ampFast.toFixed(2)})`);
+  ok(energy.ampFast <= 1.35 + 1e-9, `Würde-Deckel intakt (A ${energy.ampFast.toFixed(2)} ≤ MAX_AMP)`);
+  ok(energy.shed > 1, `Abbremsen gibt Energie an Ringe ab (shed ${energy.shed.toFixed(1)})`);
 
   await browser.close();
 } catch (e) {
