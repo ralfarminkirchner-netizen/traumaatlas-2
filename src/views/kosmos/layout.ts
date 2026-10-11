@@ -15,7 +15,7 @@ export interface SimNode {
 }
 
 /** Typ-Anker: Clustern des Kosmos auf einem Kreis. */
-const TYPE_ORDER: NodeType[] = ["discipline", "method", "exercise", "symptom", "category", "state", "phase", "block"];
+const TYPE_ORDER: NodeType[] = ["discipline", "method", "exercise", "symptom", "category", "state", "phase", "block", "profile"];
 
 export function clusterAnchor(type: NodeType, out: THREE.Vector3): THREE.Vector3 {
   const i = TYPE_ORDER.indexOf(type);
@@ -34,6 +34,7 @@ const SIZE_BY_TYPE: Record<NodeType, number> = {
   state: 0.52,
   phase: 0.44,
   block: 0.28,
+  profile: 0.4,
 };
 
 /** Deterministischer Start (seeded), damit Hydration/StrictMode stabil bleibt. */
@@ -100,6 +101,7 @@ export const EDGE_COLORS: Record<string, string> = {
   kategorie: "#b48ea3",
   erregung: "#c98a8a",
   zielzustand: "#a3b18a",
+  profil: "#a98fc7",
 };
 
 export interface EdgeRef {
@@ -146,6 +148,21 @@ const SHORT_NAMES: Record<string, string> = {
   "m:dbr": "DBR",
   "m:narm": "NARM",
   "m:emdr": "EMDR",
+  "p:pda": "PDA",
+  "p:pda-anforderung": "Anforderung",
+  "p:pda-autonomie": "Autonomie",
+  "p:pda-intern": "Innere Anforderungen",
+  "p:pda-indirekt": "Indirekte Anforderungen",
+  "p:pda-antworten": "Die vielen F's",
+  "p:pda-strategien": "Sozialstrategien",
+  "p:pda-masking": "Maskierung",
+  "p:pda-geschlecht": "Frauen & PDA",
+  "p:pda-erwachsene": "PDA erwachsen",
+  "p:pda-familie": "Familie & Schule",
+  "p:pda-beziehung": "PDA & Beziehung",
+  "p:pda-adhs": "PDA & ADHS",
+  "p:pda-audhd": "PDA & AuDHD",
+  "p:pda-kptbs": "PDA & Komplextrauma",
 };
 
 /** Anzeige-Label im Graph: Kurzform, sonst gekürzt. */

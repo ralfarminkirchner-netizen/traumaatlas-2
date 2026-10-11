@@ -9,6 +9,7 @@ import { exercises } from "./v1/exercises";
 import { symptomCategories } from "./v1/symptoms";
 import { buildingBlocks } from "./blocks";
 import { nervousStates, phaseInfos, type NervousStateId } from "./nervous";
+import { pdaEdges, pdaNodes } from "./pda";
 
 export type NodeType =
   | "discipline"
@@ -18,7 +19,8 @@ export type NodeType =
   | "category"
   | "state"
   | "phase"
-  | "block";
+  | "block"
+  | "profile";
 
 export type EdgeType =
   | "abstammung"
@@ -28,7 +30,8 @@ export type EdgeType =
   | "phase"
   | "kategorie"
   | "erregung"
-  | "zielzustand";
+  | "zielzustand"
+  | "profil";
 
 export interface AtlasNode {
   id: string;
@@ -57,6 +60,7 @@ export const nodeTypeMeta: Record<NodeType, { label: string; color: string; soft
   state: { label: "Nervensystem", color: "#8fd0b8", soft: "rgba(143,208,184,0.18)", blurb: "Die drei Zustände des autonomen Nervensystems" },
   phase: { label: "Phasen", color: "#d4b483", soft: "rgba(212,180,131,0.16)", blurb: "Stabilisierung → Verarbeitung → Integration" },
   block: { label: "Alltagsbausteine", color: "#a3b18a", soft: "rgba(163,177,138,0.16)", blurb: "Schlaf, Bewegung, Beziehung, Struktur" },
+  profile: { label: "Neuroprofile", color: "#a98fc7", soft: "rgba(169,143,199,0.16)", blurb: "Muster des Nervensystems, die über einzelne Diagnosen hinweg beschrieben werden" },
 };
 
 export const edgeTypeLabels: Record<EdgeType, string> = {
@@ -68,6 +72,7 @@ export const edgeTypeLabels: Record<EdgeType, string> = {
   kategorie: "gehört zu",
   erregung: "entspricht Erregungslage",
   zielzustand: "zielt auf Zustand",
+  profil: "kommt vor bei / prägt",
 };
 
 // Verfahren → Symptome, die sie behandeln (kuratierte Zuordnung)
@@ -196,6 +201,10 @@ function buildGraph() {
     nodes.push({ id: `b:${b.id}`, type: "block", label: b.title, sub: b.frequency, summary: b.effect });
     pushEdge(`b:${b.id}`, `state:${b.targetState === "both" ? "ventral" : b.targetState}`, "zielzustand");
   }
+
+  // Neuroprofile (PDA & Varianten)
+  nodes.push(...pdaNodes);
+  for (const e of pdaEdges) pushEdge(e.from, e.to, e.type);
 
   return { nodes, edges };
 }

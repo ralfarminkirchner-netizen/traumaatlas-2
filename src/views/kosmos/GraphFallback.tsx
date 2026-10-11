@@ -43,7 +43,7 @@ export function GraphFallback() {
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
       <div className="glass-soft overflow-x-auto rounded-2xl p-2">
-        <svg viewBox="0 0 1000 640" className="min-w-[720px]" role="img" aria-label="Statischer Beziehungsgraph: 124 Knoten und 329 Kanten">
+        <svg viewBox="0 0 1000 640" className="min-w-[720px]" role="img" aria-label={`Statischer Beziehungsgraph: ${atlasGraph.nodes.length} Knoten und ${atlasGraph.edges.length} Kanten`}>
           <rect width="1000" height="640" fill="#0e0b08" rx="12" />
           {/* Kanten */}
           {edges.map((e) => {
@@ -52,7 +52,7 @@ export function GraphFallback() {
             if (!a || !b) return null;
             const hot = selected !== null && (e.from === selected || e.to === selected);
             const dim = selected !== null && !hot;
-            const color = { abstammung: "#9aa8c7", fundierung: "#d9a05b", behandlt: "#e2a35c", reguliert: "#7fb8a4", phase: "#d4b483", kategorie: "#b48ea3", erregung: "#c98a8a", zielzustand: "#a3b18a" }[e.type] ?? "#666";
+            const color = { abstammung: "#9aa8c7", fundierung: "#d9a05b", behandlt: "#e2a35c", reguliert: "#7fb8a4", phase: "#d4b483", kategorie: "#b48ea3", erregung: "#c98a8a", zielzustand: "#a3b18a", profil: "#a98fc7" }[e.type] ?? "#666";
             return (
               <line
                 key={e.id}
@@ -71,7 +71,7 @@ export function GraphFallback() {
             const isSel = n.id === selected;
             const isNb = neighbors?.has(n.id) ?? false;
             const dim = selected !== null && !isSel && !isNb;
-            const r = n.type === "state" ? 9 : n.type === "phase" ? 8 : n.type === "method" ? 6.5 : n.type === "discipline" ? 5.5 : 4;
+            const r = n.type === "state" ? 9 : n.type === "phase" ? 8 : n.type === "method" ? 6.5 : n.type === "discipline" ? 5.5 : n.type === "profile" ? 6 : 4;
             return (
               <g key={n.id} transform={`translate(${p.x},${p.y})`} opacity={dim ? 0.25 : 1}>
                 {isSel && <circle r={r + 6} fill="none" stroke={meta.color} strokeOpacity={0.5} strokeWidth={1.5} />}

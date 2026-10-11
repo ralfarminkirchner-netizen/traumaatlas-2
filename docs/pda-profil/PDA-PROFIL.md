@@ -1,8 +1,8 @@
-# PDA-Profil — Knotenblock für den Neuroatlas (Übernahme-Entwurf)
+# PDA-Profil — Neuroprofile im Atlas (integriert)
 
-Status: **Entwurf zur Übernahme** · Datum: 2026-10-11
-Betrifft: `src/data/graph.ts` (neuer NodeType + EdgeType + Merge-Schritt),
-KiNFORMER-Befund-Tiefe, QuerLeser-Leseweg, App-Copy.
+Stand: **integriert** (2026-10-11) · `src/data/pda.ts` via `graph.ts` (buildGraph)
+eingebunden · 15 Profil-Knoten, 66 Kanten → Atlas jetzt 139 Knoten / 395 Kanten.
+Laufzeit-verifiziert: 0 Dangling-Edges, `neighborsOf("p:pda")` = 31 Nachbarn.
 
 ---
 
@@ -13,7 +13,7 @@ inzwischen umbenannt in **Pervasive Drive for Autonomy**. Beschrieben wurde
 das Muster in den 1980ern von Elizabeth Newson (UK) an autistischen Kindern.
 Heute wird es als **Profil innerhalb von Autismus** verstanden, zunehmend
 auch mit ADHS assoziiert; es ist **kein eigenständiger Diagnose-Code** in
-DSM-5-TR oder ICD-11. Deshalb im Atlas als *Profil* führen, nicht als
+DSM-5-TR oder ICD-11. Deshalb im Atlas als *Profil* geführt, nicht als
 Diagnose — das trägt die offene wissenschaftliche Einordnung ehrlich:
 Ob PDA ein eigenes Muster ist oder eine extreme Ausprägung von
 Erregungsdysregulation bei hochsensibler Neurozeption, ist ungeklärt.
@@ -24,78 +24,49 @@ sondern Neurozeption: Das Nervensystem klassifiziert Kontrollverlust als
 Gefahr und schaltet auf Kampf, Flucht, Erstarrung oder Fawning. Die
 Community fasst es als **„Can't, not won't"**: ein neurologischer Block,
 keine Entscheidung. Daraus folgt zentral: Belohnungs- und Drucksysteme
-wirken nicht und verstärken die Bedrohung.
+wirken nicht — sie verstärken die Bedrohung.
 
-## 2. Datenmodell-Vorschlag
+## 2. Datenmodell (integriert)
 
-### 2.1 Erweiterungen in `src/data/graph.ts`
+- Neuer NodeType `profile` — Meta: Label „Neuroprofile", Farbe `#a98fc7`,
+  soft `rgba(169,143,199,0.16)`.
+- Neuer EdgeType `profil` — Label „kommt vor bei / prägt".
+- ID-Konvention: Präfix `p:`.
+- Kosmos-Layout: TYPE_ORDER + SIZE_BY_TYPE (0.4) + EDGE_COLORS + Kurznamen
+  ergänzt; GraphFallback: Farbe, Radius 6, dynamische Knoten-/Kantenzahl.
 
-Neuer NodeType (in `NodeType` und `nodeTypeMeta`):
+### Knoten (15)
 
-```ts
-| "profile"
-```
+| ID | Label | Fokus |
+|----|-------|-------|
+| `p:pda` | PDA-Profil | Kern: Anforderung = Bedrohung, Autonomie = Sicherheit |
+| `p:pda-anforderung` | Anforderung als Bedrohung | Neurozeption → Alarm, PFC offline |
+| `p:pda-autonomie` | Autonomie als Sicherheit | Wahlmöglichkeit → ventraler Vagus |
+| `p:pda-intern` | Innere Anforderungen | Duschen, Essen, Schlaf, Nachrichten, Vorfreude |
+| `p:pda-indirekt` | Indirekte & implizite Anforderungen | Rechnungen, Termine, Pläne — und Lob |
+| `p:pda-antworten` | Die vielen F's | Kampf, Flucht, Freeze, Fawn, Fantasie, Vergessen, Fibbing, Flopping, Funster |
+| `p:pda-strategien` | Sozialstrategien des Vermeidens | Ablenken, verhandeln, Ausreden, Charme, Rollenspiel |
+| `p:pda-masking` | Maskierung & Internalisierung | Komplizen-Modus, unsichtbare Blockade |
+| `p:pda-geschlecht` | Übersehen bei Mädchen & Frauen | Diagnostische Lücke, Fehleinstufung |
+| `p:pda-erwachsene` | PDA bei Erwachsenen | Verwaltung, Hierarchie, Mikromanagement, Zyklus-Burnout |
+| `p:pda-familie` | Familie & Schule | Schulverweigerung trotz Lernwunsch, Low-Demand |
+| `p:pda-beziehung` | PDA in Beziehungen | „Müll rausbringen" → Panik, Jahre falscher Deutung |
+| `p:pda-adhs` | Überlappung ADHS | PDA-Züge bei ADHS mindestens so häufig wie bei Autismus |
+| `p:pda-audhd` | Überlappung AuDHD | Strukturbedürfnis × Interesse-Modus: Gas und Bremse |
+| `p:pda-kptbs` | Überlappung Komplextrauma | Vermeidung als Überlebensstrategie, Fawning, Scham |
 
-```ts
-profile: {
-  label: "Neuroprofile",
-  color: "#a98fc7",
-  soft: "rgba(169,143,199,0.16)",
-  blurb: "Muster des Nervensystems, die über einzelne Diagnosen hinweg beschrieben werden",
-},
-```
+### Kanten (66, Auswahl — vollständige Liste in `src/data/pda.ts`)
 
-Neuer EdgeType (in `EdgeType` und `edgeTypeLabels`) — nötig, weil kein
-bestehender Typ Profil↔Phänomen abbildet:
-
-```ts
-| "profil"
-```
-
-```ts
-profil: "kommt vor bei / prägt",
-```
-
-ID-Konvention (passend zum Bestand): Profil-Knoten bekommen Präfix `p:`.
-
-### 2.2 Knoten
-
-| ID | Label | Sub | Erregung | Summary |
-|----|-------|-----|----------|---------|
-| `p:pda` | PDA-Profil | Pervasive Drive for Autonomy | both | Anforderungen — auch innere, auch gewollte — wirken als Bedrohung; Autonomie ist Sicherheit. Kein Diagnose-Code, ein Muster. |
-| `p:pda-anforderung` | Anforderung als Bedrohung | Kernmechanismus | both | Neurozeption prüft jede Forderung unbewusst auf Kontrollverlust — das Nervensystem antwortet mit Alarm statt mit Willen. |
-| `p:pda-autonomie` | Autonomie als Sicherheit | Gegenpol | — | Wo Wahlmöglichkeit, Tempovorrecht und Ausstieg offen sind, sinkt der Alarm. Sicherheit entsteht durch Selbstwirksamkeit. |
-
-### 2.3 Kanten
-
-```text
-p:pda                  —profil→     cat:vermeidung        (Hauptfeld: Vermeidung & Rückzug)
-p:pda                  —profil→     erstarrung            (Blockade / Freeze bei Forderung)
-p:pda                  —profil→     panik                 (akuter Alarm bei Überforderung)
-p:pda                  —profil→     reizbar               (Kampf-Modus als Abwehr)
-p:pda                  —profil→     konzentration         (Demand-Load frisst Arbeitsgedächtnis)
-p:pda                  —profil→     hypervigilanz         (Dauer-Scan nach Forderungen)
-p:pda                  —profil→     zurueckgezogen        (Rückzug als Selbstschutz)
-p:pda                  —profil→     scham                 (Folgescham über „Blockaden“)
-p:pda                  —fundierung→ m:polyvagal           (Neurozeption als Erklärungsmodell)
-p:pda                  —phase→      phase:stabilisierung  (braucht zuerst Sicherheit, nie Überwindung)
-p:pda-anforderung      —erregung→   state:sympathikus     (Alarm-Modus bei Forderung)
-p:pda-anforderung      —erregung→   state:dorsal          (Blockade / Shutdown bei Forderung)
-p:pda-autonomie        —zielzustand→ state:ventral        (Wahlfreiheit → Sicherheitszustand)
-e:pendeln              —reguliert→  p:pda                 (Pendeln = eingebaute Wahl zwischen Anstrengung und Ressource)
-e:sicherer-ort         —reguliert→  p:pda                 (selbstgewählter Rückzugsort, tempo-offen)
-e:orientieren          —reguliert→  p:pda                 (Orientierung statt Anforderung)
-e:co-regulation        —reguliert→  p:pda                 (Sicherheit in Beziehung ohne Forderung)
-m:narm                 —behandlt→   p:pda                 (beziehungsorientiert, ohne Überforderung)
-m:se                   —behandlt→   p:pda                 (Titration: dosiert statt durch Überwinden)
-m:dbt                  —behandlt→   p:pda                 (Skills als Angebot, nicht als Zielvorgabe)
-```
-
-Begründung der kuratierten Symptom-Überlappungen: Diese sieben Symptome
-sind die im Profil am häufigsten berichteten Ausprägungen — Anforderungen
-zeigen sich bei unterschiedlichen Menschen als Erstarrung, Panik, Reizbarkeit,
-Konzentrationsbruch oder Rückzug; die Scham darüber ist fast universell
-(„Warum schaffen andere das Einfachste?").
+- Kern: `cat:vermeidung`, 7 Symptome (erstarrung, panik, reizbar,
+  konzentration, hypervigilanz, zurueckgezogen, scham), `m:polyvagal`
+  (fundierung), `phase:stabilisierung`.
+- Erregungslagen: anforderung → sympathikus + dorsal; autonomie →
+  zielzustand ventral; indirekt/masking/antworten → sympathikus bzw. dorsal.
+- Angebote (reguliert/behandlt, nie fordernd): narm, se, dbt,
+  schematherapie; pendeln, sicherer-ort, sos-orientieren, co-regulation,
+  sos-54321, sos-ausatmen, schuetteln, abend, koerperscan.
+- Varianten → Kern: 12× `profil`; Überlappungs-Kanten zu Symptomen und
+  Kategorien (siehe pda.ts).
 
 ## 3. KiNFORMER-Texte — drei Tiefenstufen
 
@@ -131,10 +102,6 @@ Konzentrationsbruch oder Rückzug; die Scham darüber ist fast universell
 
 ### Stufe 2 · Tiefgang (was dahinter wirkt)
 
-Komponiert aus den bestehenden Datenfeldern (hint/arousal/tags,
-when/goal/minutes/context, what/how/founder/year/phases) plus
-Graph-Nachbarschaft via `neighborsOf`.
-
 > **Der Mechanismus: Neurozeption vor Wille**
 >
 > Die Neurozeption prüft ununterbrochen, unbewusst und schneller als jeder
@@ -162,7 +129,7 @@ Graph-Nachbarschaft via `neighborsOf`.
 > reichen über Kampf und Flucht hinaus: Freeze (Erstarrung), Fawn
 > (Anpassung/Übererfüllen), Fantasie (Flucht in innere Welten),
 > Vergessen (Blank werden), Fibbing (Konfabulation unter Druck),
-> Flopping (physisch „abschalten").
+> Flopping (physisch „abschalten"), Funster (unkontrollierter Humor).
 >
 > **Warum Belohnung und Bestrafung scheitern**
 >
@@ -171,19 +138,35 @@ Graph-Nachbarschaft via `neighborsOf`.
 > eingebaute Wahlmöglichkeiten, Titration (dosierte Kleinstschritte mit
 > Rückkehrrecht) und die Entschärfung der Erwartung selbst.
 >
+> **Erscheinungsformen: Maskierung, Geschlecht, Erwachsensein**
+>
+> Internalisierer ertragen Anforderungen unter hohem Innendruck —
+> Jahrzehntelanges Mitgehen mit Qual, oft erst im Erwachsenenalter erkannt.
+> Mädchen und Frauen werden durch sozialisierte Anpassung übersehen oder
+> falsch eingestuft (Angststörung, Borderline, „hochsensibel"). Bei
+> Erwachsenen wird das Muster Verwaltung: Formulare, Steuererklärung,
+> Mikromanagement — glänzen bei selbstgewählten Projekten, Kollaps bei
+> fremden Vorgaben, wiederkehrendes Burnout.
+>
 > **Beziehung ist der Schauplatz**
 >
 > Erwachsene beschreiben es so: Die Partnerin bittet, den Müll
 > rauszubringen — und der Körper friert ein, obwohl man es *will*. Von
 > außen sieht es kalt, trotzig oder passiv-aggressiv aus. Von innen: Panik,
-> Scham, Erstarrung. Jahre falscher Deutung (Trotz, Desinteresse,
-> „böswillig") hinterlassen tiefe Scham und Beziehungstrauma — deshalb ist
-> PDA fast immer auch ein Beziehungsthema.
+> Scham, Erstarrung. Jahre falscher Deutung hinterlassen tiefe Scham und
+> Beziehungstrauma — deshalb ist PDA fast immer auch ein Beziehungsthema.
+>
+> **Überlappungen**
+>
+> Mit ADHS (Anforderungsalarm trifft Interesse-Modus), AuDHD (Gas und
+> Bremse gleichzeitig) und Komplextrauma (Vermeidung als gelernte
+> Überlebensstrategie, Fawning, Scham über Blockaden) — die Grenzen sind
+> fließend und werden erst erforscht.
 
 ### Stufe 3 · QuerLeser-Leseweg
 
 Fortlaufende Lesestrecke, offline aus `atlasGraph` komponiert
-(Kanten-Tour). Vorschlag für den Startknoten `p:pda`:
+(Kanten-Tour). Startknoten `p:pda`:
 
 ```text
 p:pda
@@ -191,12 +174,17 @@ p:pda
   → zurueckgezogen / erstarrung       (die sichtbaren Symptome)
   → state:dorsal                      (die Notbremse dahinter)
   → stresskaskade: erstarrung         (wann das Nervensystem abschaltet)
+  → p:pda-antworten                   (die vielen F's als Antwortspektrum)
+  → p:pda-intern                      (warum die eigenen Forderungen am
+                                       schwersten wiegen)
   → m:se                              (Titration & Pendeln als Gegenentwurf
                                        zum „Durchbeißen")
   → e:pendeln                         (die Übung, die Wahl eingebaut hat)
   → phase:stabilisierung              (warum Sicherheit vor Verarbeitung)
   → p:pda-autonomie                   (der Gegenpol: Sicherheit durch Wahlfreiheit)
   → state:ventral                     (wohin das führen darf)
+  → p:pda-beziehung                   (wo das Muster am lautesten wird)
+  → e:co-regulation                   (Sicherheit in Beziehung ohne Forderung)
 ```
 
 ## 4. Design-Prinzip „PDA-kompatibel" (für App + Briefs)
@@ -206,30 +194,28 @@ p:pda
    jederzeit nutzbaren Ausstieg.
 2. **Keine Druckmechanik** — keine Streaks, keine Push-Erinnerungen im
    Aufforderungston, keine Fortschrittsanzeigen, die implizit fordern.
-   (Deckt sich mit der bestehenden Regel „Würde vor Effekt".)
+   (Deckt sich mit der Regel „Würde vor Effekt".)
 3. **Wahl einbauen, wo sie nicht nötig wäre** — zwei Wege statt einer
-   Vorgabe. Pendeln ist das Muster: Annäherung mit Rückkehrrecht.
+   Vorgabe. Pendeln ist das Muster: Annäherung mit Rückkehrrecht.
 4. **Barriere ≠ Widerstand** — die magnetische Wegstoßung im Meer ist
    phänomenologisch genau die Demand-Flucht. In der Begegnungs-Copy als
    „Schutzreaktion" benennen, nie als „Widerstand gegen dich".
 5. **Scham entschärfen** — jede Stelle, die Blockade beschreibt, benennt
    sie als Nervensystem-Schutz, nicht als Charaktereigenschaft.
 
-## 5. Übernahme-Checkliste
+## 5. Verifikation & offene Punkte
 
-- [ ] `NodeType` + `EdgeType` erweitern, `nodeTypeMeta`/`edgeTypeLabels`
-      ergänzen (Abschnitt 2.1)
-- [ ] `pda.ts` (nebenliegend) importieren; Knoten in `buildGraph()`
-      mergen oder als eigenen Block anhängen (`...pdaNodes`), Kanten
-      analog (`pushEdge`-Schleife über `pdaEdges`)
-- [ ] Farbe `#a98fc7` in `nodeTypeMeta` — auf Tageszeiten-Lesbarkeit
-      prüfen (Dawn/Dusk) via `qa/shot.mjs`-Szenario
-- [ ] KiNFORMER-Texte (Abschnitt 3) in `seaBefund`-Datenpfad einbauen
-- [ ] QuerLeser-Tour (Abschnitt 3, Stufe 3) als Leseweg-Definition
-      erfassen (interne Ansicht, offline komponiert)
+- [x] tsc: keine Fehler in den PDA-/Graph-Dateien (die 5 verbleibenden
+      lokalen tsc-Fehler liegen in unveröffentlichten WIP-Änderungen in
+      `src/ocean3d/` + `OceanStage.tsx` und sind vor dieser Arbeit
+      entstanden)
+- [x] Laufzeit-Probe: 139 Knoten / 395 Kanten / 0 Dangling-Edges;
+      `neighborsOf("p:pda")` = 31 Nachbarn
+- [ ] Kosmos-Screenshot (Profil-Knoten + Legende) — sobald der lokale
+      ocean3d-WIP wieder grün ist (Vite-Boot hängt davon ab)
 - [ ] Begegnungs-Copy: Barriere/Wegweisung als „Schutzreaktion"
       formulieren (Abschnitt 4, Punkt 4)
-- [ ] `probe-rm`/Graph-Probe erweitern: `neighborsOf("p:pda")` liefert
-      erwartete Nachbarn (Sanity-Check nach Merge)
-- [ ] Fachliche Gegenlesung der Stufe-2-Texte (Abschnitt 3) — Entwurf,
-      keine therapeutische Freigabe
+- [ ] Fachliche Gegenlesung der Stufe-2-Texte — Entwurf, keine
+      therapeutische Freigabe
+- [ ] Weitere Neuroprofile (z. B. AD(H)S-Profil, Hochsensibilität) —
+      gleiche Struktur, eigenes Modul
