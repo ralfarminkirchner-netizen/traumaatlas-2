@@ -84,7 +84,7 @@ export function Seagrass() {
         const x = s.x + Math.cos(a) * r;
         const z = s.z + Math.sin(a) * r;
         const d = depthAt(x, z);
-        if (d < 1.8 || d > 8.5) continue;
+        if (d < 3.0 || d > 10.5) continue;
         // Halm bleibt UNTER Wasser: Spitze ~0.4 unter der Oberfläche gekappt
         const h = Math.min(0.6 + rng() * 1.1, (d - 0.4) / 1.5);
         eul.set((rng() - 0.5) * 0.22, rng() * Math.PI * 2, (rng() - 0.5) * 0.22);

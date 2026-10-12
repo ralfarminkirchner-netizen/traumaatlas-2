@@ -51,7 +51,7 @@ export function Rocks() {
         const x = s.x + Math.cos(a) * r;
         const z = s.z + Math.sin(a) * r;
         const d = depthAt(x, z);
-        if (d < 2.2 || d > 12.5) continue;
+        if (d < 3.5 || d > 15.0) continue;
         const sc = 0.28 + rng() * rng() * 1.5;
         eul.set(rng() * Math.PI, rng() * Math.PI * 2, rng() * Math.PI);
         q.setFromEuler(eul);

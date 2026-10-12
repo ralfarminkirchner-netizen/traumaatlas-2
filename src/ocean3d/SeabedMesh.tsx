@@ -136,9 +136,9 @@ export function Seabed() {
     // Caustics: Sonne treibt sie, Mond nur als leises Netz — gedeckelt,
     // damit die Untiefe nie zur überbelichteten Fläche kippt
     u.uCausticI.value = (0.14 + 0.86 * Math.max(_celDir.y, 0) * (pal.sunDisc > 0.5 ? 1 : 0.35)) * 0.55;
-    // Boden-Helligkeit: nachts gedämpft, tagsüber geliftet — unter Wasser
-    // zusätzlich abgedunkelt (Wasserkörper schluckt Licht)
-    u.uLight.value = THREE.MathUtils.clamp(0.75 + ((pal.exposure - 1.0) / 0.12) * 0.4, 0.7, 1.2) * (1 - 0.32 * diveState.sub);
+    // Boden-Helligkeit: nachts gedämpft, tagsüber NUR leicht geliftet (helle
+    // Flecken lesen sonst wie Fehler/„kaputt"), unter Wasser abgedunkelt
+    u.uLight.value = THREE.MathUtils.clamp(0.75 + ((pal.exposure - 1.0) / 0.12) * 0.18, 0.7, 0.95) * (1 - 0.32 * diveState.sub);
   });
 
   return (

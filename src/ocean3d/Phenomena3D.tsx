@@ -16,6 +16,8 @@ import { waveHeight, waveNormal } from "./waves";
 import { swimmer } from "./swimmer";
 import { projStore, splat3D } from "./projStore";
 import { getHaloTexture } from "./textures";
+import { registerReflHidden } from "./OceanWater";
+
 import { Arms3D } from "./Arms3D";
 import { setWaterBuoys, type FieldLight } from "./OceanWater";
 
@@ -155,6 +157,9 @@ function LichtForm({ p, selected }: { p: Phenomenon; selected: boolean }) {
     geo.setAttribute("color", new THREE.BufferAttribute(form.threads.colors, 3));
     return geo;
   }, [form]);
+
+  // Bojen spiegeln sich (weich geliftet, uReflLift) — nicht ausblenden
+  void registerReflHidden;
 
   const nodesGeo = useMemo(() => {
     const geo = new THREE.BufferGeometry();

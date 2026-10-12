@@ -101,6 +101,8 @@ uniform float uDetail; // Stärke der Detail-Normals (distanzgesteuert)
 uniform float uTime;
 uniform float uSheen;  // 0 = nah, 1 = Übersicht: breite Mondschein-Bahn
 uniform float uReflBoost; // Reflexionsstärke, phasenabhängig (Tag klarer)
+uniform vec3 uSkyTint;    // Himmelston (Lift dunkler Reflexions-Regionen bei Tag)
+uniform float uReflLift;  // Stärke des Lifts (0 nachts, ~0.45 mittags)
 uniform vec2 uMoonAz;  // normierter Azimut der Lichtquelle (xz-Ebene)
 // Farbiges Lichtfeld: 10 Kapitel-Formationen (statisch) + bis zu 14 Bojen (dynamisch)
 uniform vec4 uPools[10];    // x, z, radius, grundintensität
@@ -191,16 +193,19 @@ void main() {
   // Planare Reflexion, projektiv + Wellen-Distortion.
   // Edge-Maske: außerhalb des Spiegel-Frustums kein Clamp-Smear.
   vec2 ruvRaw = vRefl.xy / max(vRefl.w, 1e-4);
-  ruvRaw += N.xz * 0.034;
+  ruvRaw += N.xz * 0.042;
   vec2 inEdge = smoothstep(0.0, 0.05, ruvRaw) * (1.0 - smoothstep(0.95, 1.0, ruvRaw));
   float reflMask = inEdge.x * inEdge.y * (UNDER ? 0.0 : 1.0); // unter Wasser kein Himmelsspiegel
   vec2 ruv = clamp(ruvRaw, vec2(0.002), vec2(0.998));
   vec3 refl = texture2D(tReflect, ruv).rgb;
+  // Tagsüber dunkle Spiegel-Inhalte (tief gestaffelte, meist leere Regionen)
+  // in Richtung Himmelston anheben — sonst lesen sie sich als Schmutz-Säulen
+  refl = mix(refl, uSkyTint, uReflLift);
 
   // Tiefe/Untiefe: Kämme heller, Täler schwarzblau — und jetzt auch echt
   // bathymetrisch: Untiefen um die Inseln heller, offene See dunkel
   float wdepth = depthAtWorld(vWorldPos.xz);
-  float shallowF = exp(-wdepth * 0.2);
+  float shallowF = exp(-wdepth * 0.13);
   float heightMix = clamp(vWorldPos.y * 1.4 + 0.35, 0.0, 1.0);
   vec3 waterBody = mix(uDeepColor, uShallowColor, clamp(heightMix * 0.55 * 0.6 + shallowF * 0.55, 0.0, 1.0));
 
@@ -272,7 +277,7 @@ void main() {
   float packFoam = max(smoothstep(0.66, 0.30, pfj), smoothstep(0.66, 0.30, pf2j));
   float crestFoam = (crestBand * crestBand * smoothstep(0.58, 0.95, pAmp)
     + crestBand2 * crestBand2 * smoothstep(0.58, 0.95, p2Amp)) * (0.4 + 0.6 * foamN);
-  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.4);
+  float foam = smoothstep(0.58, 0.92, vCrest * (0.5 + 0.75 * foamN) + vRingFoam * 0.55 * (0.4 + foamN) + packFoam * (0.42 + 0.5 * foamN) + crestFoam * 0.4 + vTrailFoam * (0.45 + 0.55 * foamN) * 0.8);
   col = mix(col, uFoamColor, min(foam, 1.0) * 0.38);
 
   // ── Die Oberfläche VON UNTEN ──
@@ -365,6 +370,13 @@ const MAX_BUOYS = 14;
 const _pools: FieldLight[] = [];
 const _buoys: FieldLight[] = [];
 
+/** Objekte, die im Spiegel-Pass AUSGEblendet werden (kleine helle Körper —
+ *  ihre Reflexion liest sich als dunkle, segmentierte Artefakt-Säule). */
+const _reflHidden = new Set<THREE.Object3D>();
+export function registerReflHidden(obj: THREE.Object3D | null) {
+  if (obj) _reflHidden.add(obj);
+}
+
 /** Kapitel-Lichtpools (10, statisch bis auf visited-Intensität) — Aufruf pro Frame ok. */
 export function setWaterPools(list: FieldLight[]) {
   _pools.length = 0;
@@ -436,6 +448,8 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
           uDetail: { value: 1 },
           uSheen: { value: 0 },
           uReflBoost: { value: 1 },
+          uSkyTint: { value: new THREE.Color("#9fbdd0") },
+          uReflLift: { value: 0 },
           uMoonAz: { value: moonAz },
           uPools: { value: poolVec },
           uPoolColor: { value: poolCol },
@@ -519,6 +533,9 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     (mat.uniforms.uFoamColor.value as THREE.Color).copy(pal.foam);
     (mat.uniforms.uMoonAz.value as THREE.Vector2).set(_celDir.x, _celDir.z).normalize();
     mat.uniforms.uReflBoost.value = pal.reflBoost;
+    // Dunkle Reflexions-Regionen bei Tag Richtung Himmelston liften
+    (mat.uniforms.uSkyTint.value as THREE.Color).copy(pal.horizon);
+    mat.uniforms.uReflLift.value = 0.45 * Math.max(_celDir.y, 0) * (pal.sunDisc > 0.5 ? 1 : 0);
     // Phänomen-Lichter: bei Tag stärker, damit sie sich immer lesen
     const lightBoost = pal.lightBoost;
 
@@ -583,14 +600,19 @@ export function OceanWater({ mobile = false }: { mobile?: boolean }) {
     if (mesh) {
       updateMirror(camera, mirrorCam, texMatrix);
       mesh.visible = false;
+      // Kleine helle Körper aus dem Spiegel lassen (Artefakt-Säulen)
+      const restore: THREE.Object3D[] = [];
+      _reflHidden.forEach((o) => { if (o.visible) { restore.push(o); o.visible = false; } });
       const prevRT = gl.getRenderTarget();
       const prevTone = gl.toneMapping;
       gl.toneMapping = THREE.NoToneMapping;
       gl.setRenderTarget(rt);
       gl.clear();
-      gl.render(scene, mirrorCam);
+      // QA-Schalter: Reflexions-Pass komplett überspringen (Artefakt-Jagd)
+      if (!(window as unknown as { __noRefl?: boolean }).__noRefl) gl.render(scene, mirrorCam);
       gl.setRenderTarget(prevRT);
       gl.toneMapping = prevTone;
+      for (const o of restore) o.visible = true;
       mesh.visible = true;
     }
   });

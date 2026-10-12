@@ -703,6 +703,7 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
             ? `Entdeckt ${wildProgress().caught} / ${wildProgress().total}`
             : "Wildlinge treiben um die Inseln — geh ihnen nah"}
         </p>
+        <GamingHint />
         <DiveHint />
       </div>
 
@@ -789,6 +790,20 @@ function DiveHint() {
   );
 }
 
+/** Steuerungs-Modus-Zeile: folgt dem G-Toggle ohne Re-Render der Stage. */
+function GamingHint() {
+  const [gaming, setGaming] = useState(swimmer.gaming);
+  useEffect(() => {
+    const iv = setInterval(() => setGaming((prev) => (prev === swimmer.gaming ? prev : swimmer.gaming)), 200);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <p className="mt-1 text-[10px] tracking-[0.2em] text-white/25">
+      {gaming ? "Pfeile: direkte Fahrt — G: Rennspiel" : "WASD: Rennspiel — G: direkte Pfeile"}
+    </p>
+  );
+}
+
 export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
   const ocean = useOcean();
   const reduced = useReducedMotion();
@@ -822,6 +837,11 @@ export function OceanStage({ onSail }: { onSail: (id: IslandId) => void }) {
       if (e.key === " " && !e.repeat) {
         const s = getOceanState();
         if (!s.selected && !s.view) { diveState.held = true; e.preventDefault(); }
+        return;
+      }
+      // G: Gaming-Mode umschalten (direkte Pfeil-Steuerung ↔ Rennspiel-Fahrt)
+      if (e.key.toLowerCase() === "g" && !e.repeat) {
+        swimmer.gaming = !swimmer.gaming;
       }
     };
     const up = (e: KeyboardEvent) => {

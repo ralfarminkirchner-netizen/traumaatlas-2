@@ -45,6 +45,9 @@ export const swimmer = {
   smR: 4.2,
   smStrength: 0.55,
   smActive: 0,
+  /** GAMING-MODE: Pfeiltasten/WASD = DIREKTE Richtung (oben = weg von der
+   *  Kamera), keine Panzer-Lenkung. Toggle: Taste G. */
+  gaming: true,
 };
 
 /** Tastatur-Fahrt: gehaltene Richtungstasten ("w"|"a"|"s"|"d") */
@@ -69,7 +72,7 @@ export const SWIM = {
   lookRate: 0.0042,    // Maus-Look-Empfindlichkeit (rad/px)
   gravity: 5.4,        // Fallbeschleunigung beim Hüpfen (Spielgefühl, nicht real)
   launchSlope: 1.1,    // min. vertikale Oberflächengeschwindigkeit für Airtime
-  fieldBase: 11,       // Feldreichweite der Phänomene
+  fieldBase: 26,       // Feldreichweite der Phänomene (weitläufige Welt)
 } as const;
 
 /** Druckfeld-Radius skaliert mit dem Wachstum (würdevoll, wurzelförmig). */
@@ -394,32 +397,60 @@ export function stepSwimmer(dt: number, t: number): SwimStepOut {
   let speed = Math.hypot(swimmer.vx, swimmer.vz);
 
   if (swimmer.driveMix > 0.5) {
-    // ── Tastatur-Fahrt (Third-Person-Rennspiel) ──
-    mode = "fahrt";
-    const fwd = (driveKeys.has("w") ? 1 : 0) - (driveKeys.has("s") ? 0.55 : 0);
-    const steer = (driveKeys.has("d") ? 1 : 0) - (driveKeys.has("a") ? 1 : 0);
-    // A/D lenkt — stärker bei Tempo (Rennspiel), nicht im Stand
-    swimmer.heading -= steer * dt * SWIM.turnRate * (0.35 + Math.min(1, speed / 14));
-    const hx = Math.sin(swimmer.heading);
-    const hz = -Math.cos(swimmer.heading);
-    swimmer.vx += hx * fwd * SWIM.thrust * dt;
-    swimmer.vz += hz * fwd * SWIM.thrust * dt;
-    const dragF = Math.exp(-SWIM.drag * dt);
-    swimmer.vx *= dragF;
-    swimmer.vz *= dragF;
-    // Feld-Kräfte wirken in der Fahrt voll
-    const field = fieldForces();
-    swimmer.vx += field.fx * dt;
-    swimmer.vz += field.fz * dt;
-    const maxV = swimmerMaxSpeed();
-    const v = Math.hypot(swimmer.vx, swimmer.vz);
-    if (v > maxV) {
-      swimmer.vx = (swimmer.vx / v) * maxV;
-      swimmer.vz = (swimmer.vz / v) * maxV;
+    if (swimmer.gaming) {
+      // ── GAMING-MODE: Pfeile/WASD = DIREKTE Richtung ──
+      // Oben = weg von der Kamera (Nord, −z), Rechts = Ost (+x) — keine
+      // Panzer-Lenkung, die Welle antwortet sofort (Zelda-Prinzip).
+      mode = "fahrt";
+      const ix = (driveKeys.has("d") ? 1 : 0) - (driveKeys.has("a") ? 1 : 0);
+      const iz = (driveKeys.has("s") ? 1 : 0) - (driveKeys.has("w") ? 1 : 0);
+      const mag = Math.hypot(ix, iz);
+      if (mag > 0) {
+        const target = swimmerMaxSpeed() * 0.85;
+        const k = 1 - Math.exp(-4.5 * dt);
+        swimmer.vx += ((ix / mag) * target - swimmer.vx) * k;
+        swimmer.vz += ((iz / mag) * target - swimmer.vz) * k;
+        // Heading folgt der Geschwindigkeit (die Welle schaut in Fahrtrichtung)
+        swimmer.heading = Math.atan2(swimmer.vx, -swimmer.vz);
+      } else {
+        const dragF = Math.exp(-SWIM.drag * 1.6 * dt);
+        swimmer.vx *= dragF;
+        swimmer.vz *= dragF;
+      }
+      const field = fieldForces();
+      swimmer.vx += field.fx * dt;
+      swimmer.vz += field.fz * dt;
+      swimmer.x += swimmer.vx * dt;
+      swimmer.z += swimmer.vz * dt;
+      speed = Math.min(Math.hypot(swimmer.vx, swimmer.vz), swimmerMaxSpeed());
+    } else {
+      // ── Tastatur-Fahrt (Third-Person-Rennspiel) ──
+      mode = "fahrt";
+      const fwd = (driveKeys.has("w") ? 1 : 0) - (driveKeys.has("s") ? 0.55 : 0);
+      const steer = (driveKeys.has("d") ? 1 : 0) - (driveKeys.has("a") ? 1 : 0);
+      // A/D lenkt — stärker bei Tempo (Rennspiel), nicht im Stand
+      swimmer.heading -= steer * dt * SWIM.turnRate * (0.35 + Math.min(1, speed / 14));
+      const hx = Math.sin(swimmer.heading);
+      const hz = -Math.cos(swimmer.heading);
+      swimmer.vx += hx * fwd * SWIM.thrust * dt;
+      swimmer.vz += hz * fwd * SWIM.thrust * dt;
+      const dragF = Math.exp(-SWIM.drag * dt);
+      swimmer.vx *= dragF;
+      swimmer.vz *= dragF;
+      // Feld-Kräfte wirken in der Fahrt voll
+      const field = fieldForces();
+      swimmer.vx += field.fx * dt;
+      swimmer.vz += field.fz * dt;
+      const maxV = swimmerMaxSpeed();
+      const v = Math.hypot(swimmer.vx, swimmer.vz);
+      if (v > maxV) {
+        swimmer.vx = (swimmer.vx / v) * maxV;
+        swimmer.vz = (swimmer.vz / v) * maxV;
+      }
+      swimmer.x += swimmer.vx * dt;
+      swimmer.z += swimmer.vz * dt;
+      speed = Math.min(v, maxV);
     }
-    swimmer.x += swimmer.vx * dt;
-    swimmer.z += swimmer.vz * dt;
-    speed = Math.min(v, maxV);
   } else if (
     !inactive && ptr && ptr.alive &&
     now - swimmer.lastDriveEndT > 1200 && // Schonfrist nach der Fahrt: kein Rücksprung
@@ -457,9 +488,9 @@ export function stepSwimmer(dt: number, t: number): SwimStepOut {
     speed = Math.hypot(swimmer.vx, swimmer.vz);
   }
 
-  // Weltgrenzen (weich)
-  const BX = 49;
-  const BZ = 30;
+  // Weltgrenzen (weich) — Welt 286×176, Rand mit Luft
+  const BX = 135;
+  const BZ = 80;
   if (swimmer.x < -BX) { swimmer.x = -BX; swimmer.vx = Math.abs(swimmer.vx) * 0.4; }
   if (swimmer.x > BX) { swimmer.x = BX; swimmer.vx = -Math.abs(swimmer.vx) * 0.4; }
   if (swimmer.z < -BZ) { swimmer.z = -BZ; swimmer.vz = Math.abs(swimmer.vz) * 0.4; }

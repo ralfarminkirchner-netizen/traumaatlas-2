@@ -51,7 +51,7 @@ export function CameraRig() {
     const speed = Math.hypot(vx, vy);
     let targetYaw = 0;
     const drive = swimmer.driveMix;
-    if (drive > 0.2) {
+    if (drive > 0.2 && !swimmer.gaming) {
       // Verfolgungskamera in der Tastatur-Fahrt: hinter der Fahrtrichtung (Rennspiel)
       targetYaw = swimmer.heading * drive;
     } else if (speed > 40) {

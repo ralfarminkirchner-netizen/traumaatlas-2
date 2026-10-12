@@ -51,7 +51,7 @@ try {
     const kx = co.w2x(2600), kz = co.w2z(640); // Kosmos-Mitte
     const dKosmos = depthAt(kx, kz);
     const dEdge = depthAt(kx + SHOALS[1].r * 0.5, kz);
-    const dOpen = depthAt(48, 28); // fern aller Inseln
+    const dOpen = depthAt(120, 70); // fern aller Platten (Welt 286×176)
     let dMin = 99, dMax = -99;
     for (let i = 0; i < 800; i++) {
       const x = (Math.sin(i * 12.9898) * 0.5) * 320;
@@ -103,11 +103,11 @@ try {
 
   console.log("Tauch-Werte:", JSON.stringify(r, (k, v) => (typeof v === "number" ? +v.toFixed(3) : v)));
   ok(r.mirror, "__ta3dive-Spiegel vorhanden");
-  ok(r.dKosmos < 5, `Untiefe unter der Insel flach (${r.dKosmos} < 5)`);
-  ok(r.dKosmos >= 1.4, `Untiefe respektiert die Mindesttiefe (${r.dKosmos} ≥ 1.4)`);
-  ok(r.dOpen > 12, `offene See tief (${r.dOpen} > 12)`);
+  ok(r.dKosmos < 7.5, `Untiefe unter der Insel flach (${r.dKosmos} < 7.5)`);
+  ok(r.dKosmos >= 4.0, `Untiefe respektiert die Mindesttiefe — keine Welle legt den Grund frei (${r.dKosmos} ≥ 4.0)`);
+  ok(r.dOpen > 15, `offene See tief (${r.dOpen} > 15)`);
   ok(r.dEdge > r.dKosmos - 2.5, `Platte fällt sanft ab (Rand ${r.dEdge})`);
-  ok(r.dMin >= 1.39 && r.dMax <= r.deepSea + 1.81, `Klammern halten (${r.dMin}..${r.dMax})`);
+  ok(r.dMin >= 3.99 && r.dMax <= r.deepSea + 1.81, `Klammern halten (${r.dMin}..${r.dMax})`);
   ok(r.monotonic && r.subAfter4s > 0.97, `Eintauchen weich und monoton (sub ${r.subAfter4s})`);
   ok(r.depthAfter4s > 0.95, `Tiefgang rampet bei Halten (${r.depthAfter4s})`);
   ok(r.subBack < 0.03 && r.depthBack < 0.05, `Auftauchen weich zurück (sub ${r.subBack}, depth ${r.depthBack})`);

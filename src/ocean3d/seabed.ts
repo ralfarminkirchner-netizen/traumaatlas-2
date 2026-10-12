@@ -7,8 +7,9 @@ import * as THREE from "three";
 import { ISLANDS } from "../ocean/world";
 import { w2x, w2z, S } from "./coords";
 
-/** Basis-Tiefe der offenen See (Welteinheiten unter y=0) */
-export const DEEP_SEA = 15.5;
+/** Basis-Tiefe der offenen See (Welteinheiten unter y=0) — tief, damit keine
+ *  Wellenmulde je den Grund freilegt (Mulde max. ~2.2 + Paket ~1.4) */
+export const DEEP_SEA = 22.0;
 
 /** Wertiges Rauschen für Boden-Relief (deterministisch, ohne Textur) */
 function vnoise(x: number, z: number): number {
@@ -32,12 +33,14 @@ function vnoise(x: number, z: number): number {
 
 interface Shoal { x: number; z: number; r: number; h: number }
 
-/** Untiefen-Platten um die Inseln — dort trägt der Boden Licht und Leben. */
+/** Untiefen-Platten um die Inseln — dort trägt der Boden Licht und Leben.
+ *  Boden mindestens 4.0 tief: die tiefste Wellenmulde (Paket ~1.35 +
+ *  Druckfeld ~0.6 + Gerstner ~0.5) bleibt immer ÜBER Wasser. */
 export const SHOALS: Shoal[] = ISLANDS.map((isl) => ({
   x: w2x(isl.x),
   z: w2z(isl.y),
   r: isl.r * S * 3.4,
-  h: DEEP_SEA - 3.1 - ((isl.r - 220) / 80) * 1.2, // größere Insel → flacher (2.5..3.7 Resttiefe)
+  h: DEEP_SEA - 4.6 - ((isl.r - 220) / 80) * 1.6, // größere Insel → flacher (4.2..5.4 Resttiefe)
 }));
 
 /**
@@ -57,7 +60,7 @@ export function depthAt(x: number, z: number): number {
     // feines Relief auf den Platten (±0.5)
     d += (vnoise(x * 0.11 + s.x, z * 0.11 + s.z) - 0.5) * fall * 1.0;
   }
-  return Math.max(1.4, Math.min(DEEP_SEA + 1.8, d));
+  return Math.max(4.0, Math.min(DEEP_SEA + 1.8, d));
 }
 
 /** Sandkante: bis hierhin liest sich der Boden sandig-hell (Caustics, Seegras) */

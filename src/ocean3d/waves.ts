@@ -190,11 +190,12 @@ export const PACKET_PROFILE = {
   DECAY: 1.1,
   /** Jacobi-Schwelle: darunter bricht die Welle (Weißkapsel + Gischt) */
   BREAK_J: 0.42,
-  /** Schneise: Spurpunkte, Kanalbreite, Zerfallszeit, Muldentiefe, Schrittweite */
+  /** Schneise: Spurpunkte, Kanalbreite, Zerfallszeit, Muldentiefe, Schrittweite —
+   *  sichtbare Furche: tief genug zum Lesen, breit genug als Kielgraben */
   TRAIL_COUNT: 18,
-  TRAIL_SIGMA: 1.35,
-  TRAIL_TAU: 4.2,
-  TRAIL_DEPTH: 0.34,
+  TRAIL_SIGMA: 1.9,
+  TRAIL_TAU: 6.5,
+  TRAIL_DEPTH: 0.8,
   TRAIL_STEP: 0.14,
 } as const;
 

@@ -11,7 +11,7 @@ import { ISLANDS, getOceanState, type IslandDef } from "../ocean/world";
 import { w2x, w2z, S } from "./coords";
 import { waveHeight, waveNormal } from "./waves";
 import { projStore } from "./projStore";
-import { setWaterPools, type FieldLight } from "./OceanWater";
+import { setWaterPools, registerReflHidden, type FieldLight } from "./OceanWater";
 import { getHaloTexture, getShaftTexture } from "./textures";
 
 /** Glyphen-Rune als Canvas-Textur (pro Kapitel einmalig). */
@@ -46,6 +46,10 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
   );
   const glyphTex = useMemo(() => makeGlyphTexture(isl.glyph), [isl.glyph]);
   const phase = useMemo(() => Math.abs(isl.x * 0.37 + isl.y * 0.11) % (Math.PI * 2), [isl]);
+
+  // Formationen spiegeln sich im Wasser (weich gelifteter Lichtpfad) —
+  // NICHT ausblenden: der Reflexions-Lift (uReflLift) macht die Spur weich.
+  void registerReflHidden;
   const ringGeos = useMemo(
     () => [1.45, 1.9, 2.35].map((r) => new THREE.TorusGeometry(r, 0.022, 8, 72)),
     [],
@@ -99,7 +103,7 @@ function ChapterFormation({ isl }: { isl: IslandDef }) {
   const out = () => { document.body.style.cursor = ""; };
 
   return (
-    <group ref={groupRef} position={[baseX, 0, baseZ]}>
+    <group ref={groupRef} position={[baseX, 0, baseZ]} name="chapter-formation">
       {/* drei Lichtringe, leicht gegeneinander geneigt */}
       {ringGeos.map((geo, i) => (
         <mesh
