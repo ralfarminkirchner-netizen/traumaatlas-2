@@ -7,6 +7,7 @@ import { GraphScene, type HoverInfo, type GraphMode } from "./GraphScene";
 import { GraphFallback } from "./GraphFallback";
 import { NodeCard } from "./NodeCard";
 import { EDGE_COLORS } from "./layout";
+import { GraphBodiesView } from "../phaenomenautik/GraphBodiesView";
 
 const LENSES: { label: string; types: NodeType[] | null; description: string }[] = [
   { label: "Alle", types: null, description: "Der vollständige Atlas" },
@@ -31,6 +32,7 @@ export default function KosmosView() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [resetNonce, setResetNonce] = useState(0);
   const [showLegend, setShowLegend] = useState(false);
+  const [showBodies, setShowBodies] = useState(false);
   const lens = LENSES[lensIndex];
   const lensCount = atlasGraph.nodes.filter((n) => !lens.types || lens.types.includes(n.type)).length;
   const sortedNodes = useMemo(() => [...atlasGraph.nodes].sort((a, b) => a.label.localeCompare(b.label, "de")), []);
@@ -63,13 +65,13 @@ export default function KosmosView() {
               </optgroup>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1.5 text-sm text-white/75">
+          {!showBodies && <label className="flex flex-col gap-1.5 text-sm text-white/75">
             Anordnung
             <select className={control} value={mode} onChange={(e) => { setMode(e.target.value as GraphMode); navigate(null); }}>
               {MODES.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
-          </label>
-          {mode === "thema" && <label className="flex flex-col gap-1.5 text-sm text-white/75">
+          </label>}
+          {!showBodies && mode === "thema" && <label className="flex flex-col gap-1.5 text-sm text-white/75">
             Verfahren
             <select className={control} value={themeId} onChange={(e) => { setThemeId(e.target.value); navigate(null); }}>
               {methods.map((m) => <option key={m.id} value={`m:${m.id}`}>{m.name}</option>)}
@@ -79,6 +81,10 @@ export default function KosmosView() {
             onClick={() => { navigate(null); setResetNonce((n) => n + 1); }}>
             <RotateCcw size={15} aria-hidden="true" /> Ansicht einpassen
           </button>
+          <button type="button" className={`${control} hover:bg-white/10`} aria-pressed={showBodies}
+            onClick={() => { setHover(null); setShowBodies((value) => !value); }}>
+            {showBodies ? "Zur Kosmoskarte" : "Netz formen"}
+          </button>
         </div>
         <p className="my-4 text-sm leading-relaxed text-white/75" aria-live="polite">
           {focusNode ? `${focusNode.label} · ${neighborsOf(focusNode.id).size} direkte Nachbarn. Die übrige Karte tritt zurück.`
@@ -86,15 +92,16 @@ export default function KosmosView() {
         </p>
         <div className={`grid items-start gap-4 ${focusId ? "lg:grid-cols-[minmax(0,1fr)_320px]" : ""}`}>
           <div className="relative min-w-0 overflow-hidden rounded-xl border border-white/20 bg-[#090c14]">
-            <div className="relative h-[60vh] min-h-[380px] max-h-[760px] sm:h-[70vh] sm:min-h-[500px]">
-              <WebGLGate className="absolute inset-0" fog={false}
+            <div className={showBodies ? "relative h-[1100px] min-h-[900px] lg:h-[820px] lg:min-h-[720px]" : "relative h-[60vh] min-h-[380px] max-h-[760px] sm:h-[70vh] sm:min-h-[500px]"}>
+              {showBodies ? <GraphBodiesView selectedId={focusId} onFocus={navigate}
+                visibleTypes={lens.types} resetNonce={resetNonce} /> : <WebGLGate className="absolute inset-0" fog={false}
                 fallback={<GraphFallback mode={mode} themeId={themeId} visibleTypes={lens.types} focusId={focusId} onFocus={navigate} />}
                 camera={{ position: [0, 0, 44], fov: 50 }}>
                 <GraphScene key={resetNonce} mode={mode} themeId={themeId} visibleTypes={lens.types}
                   hoverId={hover?.id ?? null} onHover={setHover} focusId={focusId} onFocus={navigate}
                   pulsePath={null} pulseNonce={0} onPulseEnd={() => {}} />
-              </WebGLGate>
-              {hover && <div className="pointer-events-none absolute bottom-4 left-4 right-4 w-fit max-w-[calc(100%-2rem)] rounded-lg border border-white/25 bg-[#151a27] px-3 py-2 text-sm text-white">
+              </WebGLGate>}
+              {!showBodies && hover && <div className="pointer-events-none absolute bottom-4 left-4 right-4 w-fit max-w-[calc(100%-2rem)] rounded-lg border border-white/25 bg-[#151a27] px-3 py-2 text-sm text-white">
                 <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: nodeTypeMeta[hover.type as NodeType]?.color }} />
                 {hover.label}
               </div>}
@@ -132,3 +139,4 @@ export default function KosmosView() {
     </div>
   );
 }
+
