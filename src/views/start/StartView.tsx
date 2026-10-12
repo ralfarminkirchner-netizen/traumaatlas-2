@@ -9,6 +9,7 @@ import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { Disclaimer } from "@/components/Disclaimer";
 import { CHAPTERS } from "@/views/chapters";
 import { setState } from "@/state/atlas-store";
+import { atlasGraph } from "@/data/graph";
 import kvStart from "@/assets/kv-start.jpg";
 
 /** Kamerafahrt aus dem Nebel heraus auf die Konstellation. */
@@ -43,8 +44,8 @@ function StartCanvas() {
 }
 
 const STATS = [
-  { n: "124", label: "Knoten im Kosmos" },
-  { n: "329", label: "typisierte Beziehungen" },
+  { n: String(atlasGraph.nodes.length), label: "Knoten im Kosmos" },
+  { n: String(atlasGraph.edges.length), label: "typisierte Beziehungen" },
   { n: "36", label: "Disziplinen & Schulen" },
   { n: "16", label: "Trauma-Verfahren" },
   { n: "32", label: "Symptome in 6 Feldern" },
@@ -207,7 +208,7 @@ export default function StartView() {
               <p className="text-[10px] uppercase tracking-[0.3em] text-[#8fd8cf]">01 · Herzstück</p>
               <h3 className="font-display mt-1 text-xl leading-snug text-[#f3e7d3]">Der große Graph</h3>
               <p className="mt-1 text-xs leading-relaxed text-white/55 opacity-0 transition-opacity duration-500 group-hover:opacity-100">
-                124 Knoten, 329 Beziehungen — die zentrale Erfahrung des Atlas.
+                {atlasGraph.nodes.length} Knoten, {atlasGraph.edges.length} Beziehungen — die zentrale Erfahrung des Atlas.
               </p>
             </div>
           </motion.button>

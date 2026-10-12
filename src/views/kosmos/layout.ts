@@ -5,23 +5,23 @@ import { atlasGraph, nodeTypeMeta, type AtlasNode, type NodeType } from "@/data/
 export interface SimNode {
   data: AtlasNode;
   pos: THREE.Vector3;
-  vel: THREE.Vector3;
-  modePos: THREE.Vector3; // Zielposition für Stammbaum-Modus
-  appearAt: number;       // Sekunden bis zum Erscheinen (Chronologie)
+  vel: THREE.Vector3;     // Kompatibilität mit dem Canvas-Fallback; bleibt null.
+  modePos: THREE.Vector3; // Feste Position im Stammbaum-Modus
+  appearAt: number;       // Kompatibilität; alle Knoten erscheinen sofort.
   size: number;
   color: THREE.Color;
   dim: number;            // 0..1 Sichtbarkeit (Hover-Linse / Thema-Modus)
   scaleNow: number;
 }
 
-/** Typ-Anker: Clustern des Kosmos auf einem Kreis. */
+/** Eine feste Grundordnung für alle Linsen des Kosmos. */
 const TYPE_ORDER: NodeType[] = ["discipline", "method", "exercise", "symptom", "category", "state", "phase", "block", "profile"];
 
 export function clusterAnchor(type: NodeType, out: THREE.Vector3): THREE.Vector3 {
   const i = TYPE_ORDER.indexOf(type);
   const angle = (i / TYPE_ORDER.length) * Math.PI * 2 - Math.PI / 2;
-  const r = 7.2;
-  out.set(Math.cos(angle) * r, Math.sin(angle) * r * 0.62, Math.sin(angle * 2.3) * 1.6);
+  const r = 20;
+  out.set(Math.cos(angle) * r, Math.sin(angle) * r * 0.78, Math.sin(angle * 2) * 1.2);
   return out;
 }
 
@@ -37,57 +37,101 @@ const SIZE_BY_TYPE: Record<NodeType, number> = {
   profile: 0.4,
 };
 
-/** Deterministischer Start (seeded), damit Hydration/StrictMode stabil bleibt. */
-function seededRandom(seed: number): () => number {
-  let s = seed >>> 0;
-  return () => {
-    s = (s * 1664525 + 1013904223) >>> 0;
-    return s / 4294967296;
-  };
+const SPACING = 2.8;
+const compareIds = (a: SimNode, b: SimNode) => a.data.id < b.data.id ? -1 : a.data.id > b.data.id ? 1 : 0;
+
+/** Gleichmäßige Plätze, ohne Zufall oder eine laufende Simulation. */
+function hexPlaces(count: number): THREE.Vector2[] {
+  const places = [new THREE.Vector2()];
+  const directions = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]];
+  for (let ring = 1; places.length < count; ring++) {
+    let q = -ring;
+    let r = ring;
+    for (const [dq, dr] of directions) {
+      for (let step = 0; step < ring && places.length < count; step++) {
+        places.push(new THREE.Vector2(SPACING * (q + r / 2), SPACING * r * Math.sqrt(3) / 2));
+        q += dq;
+        r += dr;
+      }
+    }
+  }
+  const center = places.reduce((sum, p) => sum.add(p), new THREE.Vector2()).divideScalar(places.length);
+  return places.map((p) => p.sub(center));
+}
+
+/** Einmaliges Entzerren schützt auch Grenzen benachbarter Gruppen. */
+function separate(nodes: SimNode[], position: "pos" | "modePos") {
+  const ordered = [...nodes].sort(compareIds);
+  for (let pass = 0; pass < 64; pass++) {
+    let moved = false;
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i][position];
+      for (let j = i + 1; j < ordered.length; j++) {
+        const b = ordered[j][position];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let distance = Math.hypot(dx, dy);
+        if (distance >= SPACING - 0.001) continue;
+        if (distance < 0.0001) {
+          const angle = (i + j * 0.61803398875) * 2.3999632297;
+          dx = Math.cos(angle);
+          dy = Math.sin(angle);
+          distance = 1;
+        }
+        const shift = (SPACING - Math.hypot(b.x - a.x, b.y - a.y)) / 2;
+        a.x -= dx / distance * shift;
+        a.y -= dy / distance * shift;
+        b.x += dx / distance * shift;
+        b.y += dy / distance * shift;
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
 }
 
 export function buildSimNodes(): SimNode[] {
-  const rand = seededRandom(20261006);
-  const nodes = atlasGraph.nodes.map((data, i) => {
-    // Chronologische Erscheinung: nach Jahr (ohne Jahr: Mittelwert)
-    const year = data.year ?? 1975;
-    const t = Math.min(1, Math.max(0, (year + 450) / 2500));
-    return {
+  const nodes: SimNode[] = atlasGraph.nodes.map((data) => ({
       data,
-      pos: new THREE.Vector3((rand() - 0.5) * 3, (rand() - 0.5) * 3, (rand() - 0.5) * 3),
+      pos: new THREE.Vector3(),
       vel: new THREE.Vector3(),
       modePos: new THREE.Vector3(),
-      appearAt: 0.15 + t * 3.2 + (i % 13) * 0.015,
+      appearAt: 0,
       size: SIZE_BY_TYPE[data.type],
       color: new THREE.Color(nodeTypeMeta[data.type].color),
       dim: 1,
-      scaleNow: 0,
-    };
-  });
+      scaleNow: 1,
+  }));
+
+  for (const type of TYPE_ORDER) {
+    const group = nodes.filter((n) => n.data.type === type).sort(compareIds);
+    const places = hexPlaces(group.length);
+    const anchor = clusterAnchor(type, new THREE.Vector3());
+    group.forEach((n, i) => {
+      n.pos.set(anchor.x + places[i].x, anchor.y + places[i].y, anchor.z + Math.sin(i * 2.3999632297) * 0.8);
+    });
+  }
+  separate(nodes, "pos");
 
   // Stammbaum-Positionen: Jahr → x, Gruppe → Bahn
   const withYear = nodes.filter((n) => n.data.year !== undefined);
   const years = withYear.map((n) => n.data.year!);
-  const minY = Math.min(...years);
-  const maxY = Math.max(...years);
-  const groupLane = new Map<string, number>();
-  for (const n of nodes) {
-    if (n.data.year === undefined) continue;
-    const g = (n.data as { group?: string }).group ?? "other";
-    if (!groupLane.has(g)) groupLane.set(g, groupLane.size);
-    const lane = groupLane.get(g)!;
-    const x = ((n.data.year - minY) / (maxY - minY)) * 26 - 13;
-    const y = (lane - (groupLane.size - 1) / 2) * 3.1;
-    n.modePos.set(x, y, (lane % 2 === 0 ? 1 : -1) * 0.6);
+  const minY = years.length ? Math.min(...years) : 0;
+  const span = years.length ? Math.max(1, Math.max(...years) - minY) : 1;
+  const groups = [...new Set(withYear.map((n) => n.data.group ?? "other"))].sort();
+  const groupLane = new Map(groups.map((g, i) => [g, i]));
+  for (const n of withYear) {
+    const lane = groupLane.get(n.data.group ?? "other")!;
+    n.modePos.set(((n.data.year! - minY) / span) * 44 - 22, (lane - (groups.length - 1) / 2) * 4.2, 0);
   }
-  // Knoten ohne Jahr: in die Seiten-„Aussenwelt" stellen
-  for (const n of nodes) {
-    if (n.data.year !== undefined) continue;
-    const anchor = new THREE.Vector3();
-    clusterAnchor(n.data.type, anchor);
-    n.modePos.copy(anchor.multiplyScalar(1.9));
-    n.modePos.x = Math.sign(n.modePos.x || 1) * 15.5;
-  }
+  separate(withYear, "modePos");
+  // Undatierte Phänomene bleiben als eigener, lesbarer Bereich vorhanden.
+  const undated = nodes.filter((n) => n.data.year === undefined).sort(compareIds);
+  const places = hexPlaces(undated.length);
+  const lowerEdge = withYear.length ? Math.min(...withYear.map((n) => n.modePos.y)) : 0;
+  const upperPlace = Math.max(0, ...places.map((p) => p.y));
+  undated.forEach((n, i) => n.modePos.set(places[i].x, lowerEdge - 7 - upperPlace + places[i].y, n.pos.z));
+  separate(nodes, "modePos");
   return nodes;
 }
 

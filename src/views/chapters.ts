@@ -1,5 +1,6 @@
 // Kapitel-Metadaten des Beziehungsuniversums
 import type { ViewId } from "@/state/atlas-store";
+import { atlasGraph } from "@/data/graph";
 
 import kvStart from "@/assets/kv-start.jpg";
 import kvKaskade from "@/assets/kv-kaskade.jpg";
@@ -39,6 +40,6 @@ export const HERO = {
     id: "kosmos" as ViewId,
     art: kvStart,
     title: "Der große Graph",
-    sub: "124 Knoten · 329 Beziehungen — Disziplinen, Verfahren, Symptome, Übungen als begehbarer Kosmos.",
+    sub: `${atlasGraph.nodes.length} Knoten · ${atlasGraph.edges.length} Beziehungen — Schulen, Verfahren, Neuroprofile, Symptome und Übungen im Zusammenhang.`,
   },
 };

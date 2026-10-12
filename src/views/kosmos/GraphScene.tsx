@@ -1,14 +1,11 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import { nodeTypeMeta, type NodeType } from "@/data/graph";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
-import {
-  EDGE_COLORS, buildEdgeIndex, buildSimNodes, clusterAnchor, shortLabel,
-  type GraphMode,
-} from "./layout";
-import { PORTRAITS, PORTRAIT_NODE_IDS } from "./nodeAssets";
+import { EDGE_COLORS, buildEdgeIndex, buildSimNodes, shortLabel, type GraphMode } from "./layout";
 export type { GraphMode };
 
 export interface HoverInfo {
@@ -24,560 +21,315 @@ interface GraphSceneProps {
   onHover: (info: HoverInfo | null) => void;
   focusId: string | null;
   onFocus: (id: string | null) => void;
-  /** Pfad-Animation: Knoten-Ids, die nacheinander durchlaufen werden */
+  visibleTypes?: NodeType[] | null;
   pulsePath: string[] | null;
   pulseNonce: number;
   onPulseEnd: () => void;
 }
 
-const tmpV = new THREE.Vector3();
-const tmpV2 = new THREE.Vector3();
-const tmpAnchor = new THREE.Vector3();
-const tmpColor = new THREE.Color();
-const tmpObj = new THREE.Object3D();
+type Rect = { left: number; top: number; right: number; bottom: number };
+type Label = {
+  sprite: THREE.Sprite;
+  width: number;
+  height: number;
+  position: THREE.Vector3;
+  nodeIndex: number;
+  type: NodeType;
+};
 
-/** Knoten-Typen mit permanentem Namens-Label */
-const LABEL_TYPES = new Set(["discipline", "method", "state"]);
+function intersects(a: Rect, b: Rect) {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
 
-/** Canvas-Textur-Sprite für Knoten-Labels (keine Netzwerk-Abhängigkeit). */
-function makeLabelSprite(text: string): THREE.Sprite {
-  const scale = 2;
-  const font = `${500} ${24 * scale}px Inter, "Inter Variable", system-ui, sans-serif`;
-  const meas = document.createElement("canvas").getContext("2d")!;
-  meas.font = font;
-  const tw = Math.ceil(meas.measureText(text).width);
+/** Namen bleiben in Bildschirm-Pixeln lesbar, unabhängig vom Kartenmaßstab. */
+function makeLabel(text: string, group: boolean, position: THREE.Vector3, nodeIndex: number, type: NodeType): Label {
   const canvas = document.createElement("canvas");
-  canvas.width = tw + 20 * scale;
-  canvas.height = 40 * scale;
   const ctx = canvas.getContext("2d")!;
+  const font = `${group ? 600 : 500} 28px Inter, system-ui, sans-serif`;
+  ctx.font = font;
+  canvas.width = Math.ceil(ctx.measureText(text).width) + 32;
+  canvas.height = 48;
   ctx.font = font;
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(10, 8, 6, 0.72)";
-  const r = 10 * scale;
-  const h = 32 * scale, y0 = 4 * scale;
+  ctx.fillStyle = "rgba(14, 13, 21, 0.86)";
   ctx.beginPath();
-  ctx.roundRect(2 * scale, y0, canvas.width - 4 * scale, h, r);
+  ctx.roundRect(0, 0, canvas.width, canvas.height, 12);
   ctx.fill();
-  ctx.fillStyle = "#f3e7d3";
-  ctx.fillText(text, 10 * scale, y0 + h / 2 + scale);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.anisotropy = 2;
-  const sprite = new THREE.Sprite(
-    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }),
-  );
-  const aspect = canvas.width / canvas.height;
-  const H = 0.34; // Welthöhe des Labels
-  sprite.scale.set(H * aspect, H, 1);
+  ctx.fillStyle = group ? nodeTypeMeta[type].color : "#f3e7d3";
+  ctx.fillText(text, 16, 25);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false,
+  }));
+  sprite.visible = false;
   sprite.renderOrder = 10;
-  return sprite;
+  sprite.raycast = () => {};
+  return { sprite, width: canvas.width / 2, height: canvas.height / 2, position, nodeIndex, type };
 }
 
 export const GraphScene = memo(function GraphScene({
-  mode, themeId, hoverId, onHover, focusId, onFocus, pulsePath, pulseNonce, onPulseEnd,
+  mode, themeId, hoverId, onHover, focusId, onFocus, visibleTypes = null,
+  pulsePath, pulseNonce, onPulseEnd,
 }: GraphSceneProps) {
+  const { camera, size } = useThree();
   const reduced = useReducedMotion();
-  const { camera } = useThree();
-
-  const nodes = useMemo(buildSimNodes, []);
-  const idToIndex = useMemo(() => {
-    const m = new Map<string, number>();
-    nodes.forEach((n, i) => m.set(n.data.id, i));
-    return m;
-  }, [nodes]);
-  const edges = useMemo(() => buildEdgeIndex(idToIndex), [idToIndex]);
-
-  // Nachbarschafts-Adjazenz (Indices)
-  const adj = useMemo(() => {
-    const a: number[][] = nodes.map(() => []);
-    for (const e of edges) {
-      a[e.from].push(e.to);
-      a[e.to].push(e.from);
-    }
-    return a;
+  const nodes = useMemo(() => buildSimNodes(), []);
+  const index = useMemo(() => new Map(nodes.map((n, i) => [n.data.id, i])), [nodes]);
+  const edges = useMemo(() => buildEdgeIndex(index), [index]);
+  const adjacent = useMemo(() => {
+    const result = nodes.map(() => new Set<number>());
+    edges.forEach(({ from, to }) => { result[from].add(to); result[to].add(from); });
+    return result;
   }, [nodes, edges]);
-
-  // Thema-Subgraph: 2-Hop-Nachbarschaft
-  const themaSet = useMemo(() => {
-    if (mode !== "thema" || !themeId) return null;
-    const set = new Set<number>();
-    const start = idToIndex.get(themeId);
-    if (start === undefined) return null;
-    set.add(start);
-    for (const n of adj[start]) {
-      set.add(n);
-      for (const nn of adj[n]) set.add(nn);
-    }
-    return set;
-  }, [mode, themeId, idToIndex, adj]);
-
-  // ── Namens-Labels für zentrale Knotentypen ─────────────────
-  const labels = useMemo(() => {
-    const arr: (THREE.Sprite | null)[] = nodes.map((n) =>
-      LABEL_TYPES.has(n.data.type) ? makeLabelSprite(shortLabel(n.data.id, n.data.label)) : null,
-    );
-    return arr;
-  }, [nodes]);
-
-  // ── Porträt-Medaillons: rund, frontal, ohne Box oder Rahmen ──
-  const portraits = useMemo(() => {
-    const arr: (THREE.Sprite | null)[] = nodes.map((n) => {
-      if (!PORTRAIT_NODE_IDS.has(n.data.id)) return null;
-      const url = PORTRAITS[n.data.id];
-      if (!url) return null;
-      const size = 256;
-      const canvas = document.createElement("canvas");
-      canvas.width = canvas.height = size;
-      const ctx = canvas.getContext("2d")!;
-      const tex = new THREE.CanvasTexture(canvas);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      const img = new Image();
-      img.onload = () => {
-        const r = size / 2;
-        ctx.clearRect(0, 0, size, size);
-        ctx.beginPath();
-        ctx.arc(r, r, r - 2, 0, Math.PI * 2);
-        ctx.save();
-        ctx.clip();
-        const scale = Math.max(size / img.width, size / img.height);
-        const w = img.width * scale;
-        const h = img.height * scale;
-        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
-        // ruhige, warme Tönung für einheitliche Bildsprache
-        ctx.fillStyle = "rgba(52, 36, 20, 0.16)";
-        ctx.fillRect(0, 0, size, size);
-        ctx.restore();
-        // ein einziger feiner Lichtring — keine Box, kein Sprite-Rahmen
-        ctx.beginPath();
-        ctx.arc(r, r, r - 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(232, 201, 160, 0.55)";
-        ctx.lineWidth = 3;
-        ctx.stroke();
-        tex.needsUpdate = true;
-      };
-      img.src = url;
-      const sprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false, opacity: 0 }),
-      );
-      sprite.scale.set(1.18, 1.18, 1);
-      sprite.renderOrder = 9;
-      return sprite;
-    });
-    return arr;
-  }, [nodes]);
-
-  // ── Geometrien / Puffer ────────────────────────────────────
+  const positions = useMemo(() => nodes.map((n) => mode === "stammbaum" ? n.modePos : n.pos), [nodes, mode]);
+  const focusIndex = focusId ? index.get(focusId) ?? -1 : -1;
+  const hoverIndex = hoverId ? index.get(hoverId) ?? -1 : -1;
+  const themeSet = useMemo(() => {
+    if (mode !== "thema" || !themeId || !index.has(themeId)) return null;
+    const selected = index.get(themeId)!;
+    const result = new Set([selected, ...adjacent[selected]]);
+    [...result].forEach((i) => adjacent[i].forEach((neighbor) => result.add(neighbor)));
+    return result;
+  }, [mode, themeId, index, adjacent]);
+  const visible = useMemo(() => {
+    const types = visibleTypes === null ? null : new Set(visibleTypes);
+    return nodes.map((n, i) => (
+      (focusIndex === i || (focusIndex >= 0 && adjacent[focusIndex].has(i))) ||
+      ((!types || types.has(n.data.type)) && (!themeSet || themeSet.has(i)))
+    ));
+  }, [nodes, visibleTypes, focusIndex, adjacent, themeSet]);
   const meshRef = useRef<THREE.InstancedMesh>(null);
-  const pulseMeshRef = useRef<THREE.Mesh>(null);
   const controlsRef = useRef<OrbitControlsImpl>(null);
+  const pulseRef = useRef<THREE.Mesh>(null);
+  const edgeGeometry = useMemo(() => {
+    const geometry = new THREE.BufferGeometry();
+    const points = new Float32Array(edges.length * 6);
+    edges.forEach(({ from, to }, i) => {
+      positions[from].toArray(points, i * 6);
+      positions[to].toArray(points, i * 6 + 3);
+    });
+    geometry.setAttribute("position", new THREE.BufferAttribute(points, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
+    return geometry;
+  }, [edges, positions]);
 
-  const haloGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(nodes.length * 3), 3));
-    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(nodes.length * 3), 3));
-    return g;
-  }, [nodes]);
-
-  const edgeGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
-    g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(edges.length * 6), 3));
-    return g;
-  }, [edges]);
-
-  const pulseGeo = useMemo(() => {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(64 * 3), 3));
-    return g;
-  }, []);
-
-  // Instanz-Farben initialisieren
-  useEffect(() => {
+  // Die Instanzen ändern nur Sichtbarkeit/Farbe, niemals die Lage im Graphen.
+  useLayoutEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    nodes.forEach((n, i) => mesh.setColorAt(i, n.color));
-    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Erscheinungs-Chronologie bei reduced motion sofort vollständig
-  useEffect(() => {
-    if (reduced) nodes.forEach((n) => (n.scaleNow = 1));
-  }, [reduced, nodes]);
-
-  // ── Simulations-State ──────────────────────────────────────
-  const sim = useRef({ clock: 0, lastInteract: -10, pulseT: -1 });
-  const focusVec = useMemo(() => new THREE.Vector3(0, 0, 0), []);
-
-  // User-Interaktion am OrbitControls beobachten
-  useEffect(() => {
-    const c = controlsRef.current;
-    if (!c) return;
-    const onStart = () => (sim.current.lastInteract = sim.current.clock);
-    c.addEventListener("start", onStart);
-    return () => c.removeEventListener("start", onStart);
-  }, [mode]);
-
-  // Fokus-Ziel aktualisieren
-  useEffect(() => {
-    if (focusId) {
-      const i = idToIndex.get(focusId);
-      if (i !== undefined) focusVec.copy(nodes[i].pos);
-    }
-  }, [focusId, idToIndex, nodes, focusVec]);
-
-  // Pfad-Animation starten
-  useEffect(() => {
-    if (pulsePath && pulsePath.length >= 2) sim.current.pulseT = 0;
-  }, [pulsePath, pulseNonce]);
-
-  const pulsePathIdx = useMemo(
-    () => pulsePath?.map((id) => idToIndex.get(id)).filter((i): i is number => i !== undefined) ?? null,
-    [pulsePath, idToIndex],
-  );
-
-  useFrame((_state, rawDelta) => {
-    const delta = Math.min(rawDelta, 0.05);
-    if (!reduced) sim.current.clock += delta;
-    const { clock } = sim.current;
-    const mesh = meshRef.current;
-    if (!mesh) return;
-
-    const isConstellation = mode === "constellation" || mode === "thema";
-
-    // ── Kraft-Physik (eigene Springs, kontrollierbar) ──────
-    if (isConstellation && !reduced) {
-      const n = nodes.length;
-      // Abstossung O(n²) mit Cutoff
-      for (let i = 0; i < n; i++) {
-        const a = nodes[i];
-        for (let j = i + 1; j < n; j++) {
-          const b = nodes[j];
-          tmpV.subVectors(a.pos, b.pos);
-          const d2 = tmpV.lengthSq();
-          if (d2 > 12.25 || d2 < 1e-6) continue; // 3.5 Einheiten Cutoff
-          const d = Math.sqrt(d2);
-          const f = Math.min(0.35 / d2, 0.9) * 0.55;
-          tmpV.multiplyScalar(f / d);
-          a.vel.add(tmpV);
-          b.vel.sub(tmpV);
-        }
-      }
-      // Anker + Zentrum
-      for (const node of nodes) {
-        clusterAnchor(node.data.type, tmpAnchor);
-        tmpV.subVectors(tmpAnchor, node.pos).multiplyScalar(0.012);
-        node.vel.add(tmpV);
-        node.vel.addScaledVector(node.pos, -0.004);
-      }
-      // Feder-Kräfte auf Kanten
-      for (const e of edges) {
-        const a = nodes[e.from];
-        const b = nodes[e.to];
-        tmpV.subVectors(b.pos, a.pos);
-        const d = tmpV.length() || 0.001;
-        const rest = (a.size + b.size) * 2.6 + 0.5;
-        const stiff = e.type === "abstammung" || e.type === "fundierung" ? 0.05 : 0.025;
-        tmpV.multiplyScalar(((d - rest) / d) * stiff);
-        a.vel.add(tmpV);
-        b.vel.sub(tmpV);
-      }
-      // Thema-Modus: Sichtbare nach innen, Rest nach aussen
-      if (themaSet) {
-        for (let i = 0; i < nodes.length; i++) {
-          const node = nodes[i];
-          if (themaSet.has(i)) node.vel.addScaledVector(node.pos, -0.02);
-          else node.vel.addScaledVector(node.pos, 0.015);
-        }
-      }
-      // Integration
-      for (const node of nodes) {
-        node.vel.multiplyScalar(0.86); // Dämpfung
-        const sp = node.vel.length();
-        if (sp > 0.35) node.vel.multiplyScalar(0.35 / sp);
-        node.pos.addScaledVector(node.vel, delta * 3.2);
-      }
-    } else if (mode === "stammbaum" && !reduced) {
-      // Weiche Migration in die Jahres-Rasterung
-      for (const node of nodes) {
-        node.pos.lerp(node.modePos, Math.min(1, delta * 2.2));
-        node.vel.set(0, 0, 0);
-      }
-    }
-
-    // ── Sichtbarkeit (Hover-Linse + Thema) ─────────────────
-    const hoverIdx = hoverId ? idToIndex.get(hoverId) : undefined;
-    const focusIdx = focusId ? idToIndex.get(focusId) : undefined;
-    const lensActive = hoverIdx !== undefined || focusIdx !== undefined;
-    const lensIdx = hoverIdx ?? focusIdx;
-
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      // Erscheinen (Chronologie)
-      if (!reduced && node.scaleNow < 1) {
-        const t = Math.min(1, Math.max(0, (clock - node.appearAt) / 1.4));
-        node.scaleNow = t * t * (3 - 2 * t); // smoothstep
-      }
-      let target = 1;
-      if (mode === "thema" && themaSet && !themaSet.has(i)) target = 0.05;
-      // Stammbaum: jahrbasierte Knoten fokussieren, Rest fast unsichtbar
-      if (mode === "stammbaum" && nodes[i].data.year === undefined) target = Math.min(target, 0.05);
-      if (lensActive) {
-        const isLens = i === lensIdx;
-        const isNeighbor = lensIdx !== undefined && adj[lensIdx].includes(i);
-        // Fokus: Umgebung bleibt lesbar (kein leerer Raum); Hover: stärkeres Dimmen
-        const rest = focusIdx !== undefined && !hoverId ? 0.32 : 0.12;
-        target = Math.min(target, isLens ? 1 : isNeighbor ? 0.95 : rest);
-      }
-      node.dim += (target - node.dim) * Math.min(1, delta * 6);
-    }
-
-    // ── Instanced Mesh aktualisieren ───────────────────────
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      const boost = i === hoverIdx ? 1.7 : i === focusIdx ? 1.5 : 1;
-      const isPortrait = PORTRAIT_NODE_IDS.has(node.data.id);
-      const s = isPortrait
-        ? 0.0001
-        : node.size * node.scaleNow * boost * (0.25 + 0.75 * node.dim);
-      tmpObj.position.copy(node.pos);
-      tmpObj.scale.setScalar(Math.max(s, 0.001));
-      tmpObj.updateMatrix();
-      mesh.setMatrixAt(i, tmpObj.matrix);
-      tmpColor.copy(node.color).multiplyScalar(0.12 + 1.05 * node.dim * (i === hoverIdx ? 1.6 : 1));
-      mesh.setColorAt(i, tmpColor);
-    }
+    const object = new THREE.Object3D();
+    const color = new THREE.Color();
+    nodes.forEach((n, i) => {
+      const related = focusIndex < 0 || focusIndex === i || adjacent[focusIndex].has(i);
+      object.position.copy(positions[i]);
+      object.scale.setScalar(visible[i] ? n.size * (i === focusIndex ? 1.12 : 1) : 0);
+      object.updateMatrix();
+      mesh.setMatrixAt(i, object.matrix);
+      color.copy(n.color).multiplyScalar(related ? 1 : 0.3);
+      if (i === hoverIndex) color.lerp(new THREE.Color("#fff4df"), 0.25);
+      mesh.setColorAt(i, color);
+    });
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    const edgePositions = edgeGeometry.getAttribute("position") as THREE.BufferAttribute;
+    const colors = edgeGeometry.getAttribute("color") as THREE.BufferAttribute;
+    let edgeCount = 0;
+    edges.forEach(({ from, to, type }) => {
+      if (!visible[from] || !visible[to]) return;
+      const incident = from === focusIndex || to === focusIndex;
+      const strength = focusIndex < 0 ? 0.32 : incident ? 0.9 : 0.06;
+      color.set(EDGE_COLORS[type] ?? "#9aa8c7").multiplyScalar(strength);
+      const first = edgeCount * 2;
+      edgePositions.setXYZ(first, positions[from].x, positions[from].y, positions[from].z);
+      edgePositions.setXYZ(first + 1, positions[to].x, positions[to].y, positions[to].z);
+      colors.setXYZ(first, color.r, color.g, color.b);
+      colors.setXYZ(first + 1, color.r, color.g, color.b);
+      edgeCount++;
+    });
+    edgeGeometry.setDrawRange(0, edgeCount * 2);
+    edgePositions.needsUpdate = true;
+    colors.needsUpdate = true;
+  }, [nodes, positions, visible, focusIndex, hoverIndex, adjacent, edges, edgeGeometry]);
 
-    // ── Labels positionieren ───────────────────────────────
-    for (let i = 0; i < nodes.length; i++) {
-      const sprite = labels[i];
-      if (!sprite) continue;
-      const node = nodes[i];
-      const boost = i === hoverIdx ? 1.7 : i === focusIdx ? 1.5 : 1;
-      sprite.position.set(node.pos.x, node.pos.y + node.size * boost + 0.34, node.pos.z);
-      const vis = node.scaleNow > 0.9 ? Math.min(1, node.dim * 1.15) : 0;
-      const mat = sprite.material as THREE.SpriteMaterial;
-      mat.opacity += (vis - mat.opacity) * Math.min(1, delta * 8);
+  const labels = useMemo(() => {
+    const result = nodes.map((n, i) => makeLabel(shortLabel(n.data.id, n.data.label), false, positions[i], i, n.data.type));
+    if (mode !== "stammbaum") {
+      const types = [...new Set(nodes.map((n) => n.data.type))];
+      types.forEach((type) => {
+        const indices = nodes.flatMap((n, i) => n.data.type === type ? [i] : []);
+        const center = new THREE.Vector3();
+        indices.forEach((i) => center.add(positions[i]));
+        center.divideScalar(indices.length);
+        center.y = Math.max(...indices.map((i) => positions[i].y)) + 1.8;
+        result.push(makeLabel(nodeTypeMeta[type].label, true, center, -1, type));
+      });
     }
+    return result;
+  }, [nodes, positions, mode]);
+  const candidates = useMemo(() => labels.filter((label) => {
+    const i = label.nodeIndex;
+    if (i < 0) return focusIndex < 0 && nodes.some((n, j) => n.data.type === label.type && visible[j]);
+    if (!visible[i]) return false;
+    if (focusIndex >= 0) return i === focusIndex || adjacent[focusIndex].has(i) || i === hoverIndex;
+    return i === hoverIndex || visibleTypes !== null || mode === "stammbaum";
+  }).sort((a, b) => {
+    const priority = (label: Label) => label.nodeIndex === focusIndex && focusIndex >= 0 ? 0 :
+      label.nodeIndex === hoverIndex && hoverIndex >= 0 ? 1 : label.nodeIndex < 0 ? 2 : 3;
+    return priority(a) - priority(b) || a.nodeIndex - b.nodeIndex;
+  }), [labels, visible, visibleTypes, focusIndex, hoverIndex, adjacent, nodes, mode]);
+  const labelDirty = useRef(true);
+  const previousView = useRef<number[]>([]);
+  useLayoutEffect(() => { labelDirty.current = true; }, [candidates, positions, visible]);
+  useEffect(() => () => labels.forEach(({ sprite }) => {
+    const material = sprite.material as THREE.SpriteMaterial;
+    material.map?.dispose();
+    material.dispose();
+  }), [labels]);
+  useEffect(() => () => edgeGeometry.dispose(), [edgeGeometry]);
 
-    // ── Porträt-Medaillons positionieren ───────────────────
-    for (let i = 0; i < nodes.length; i++) {
-      const sprite = portraits[i];
-      if (!sprite) continue;
-      const node = nodes[i];
-      const boost = i === hoverIdx ? 1.22 : i === focusIdx ? 1.18 : 1;
-      sprite.position.set(node.pos.x, node.pos.y, node.pos.z);
-      const sc = 1.18 * boost * (0.25 + 0.75 * node.dim) * Math.max(node.scaleNow, 0.001);
-      sprite.scale.set(sc, sc, 1);
-      const mat = sprite.material as THREE.SpriteMaterial;
-      // Medaillons bleiben lesbar, auch wenn der Knoten gerade gedimmt ist —
-      // sonst wirken vorhandene Porträts wie „fehlende Bilder"
-      const vis = node.scaleNow > 0.9 ? Math.max(0.62, Math.min(1, node.dim * 1.2)) : 0;
-      mat.opacity += (vis - mat.opacity) * Math.min(1, delta * 8);
-    }
-
-    // ── Halos (Points) ─────────────────────────────────────
-    const hp = haloGeo.attributes.position as THREE.BufferAttribute;
-    const hc = haloGeo.attributes.color as THREE.BufferAttribute;
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i];
-      hp.setXYZ(i, node.pos.x, node.pos.y, node.pos.z);
-      tmpColor.copy(node.color).multiplyScalar(node.dim * 0.5 * node.scaleNow);
-      hc.setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
-    }
-    hp.needsUpdate = true;
-    hc.needsUpdate = true;
-
-    // ── Kanten (LineSegments) ──────────────────────────────
-    const ep = edgeGeo.attributes.position as THREE.BufferAttribute;
-    const ec = edgeGeo.attributes.color as THREE.BufferAttribute;
-    for (let e = 0; e < edges.length; e++) {
-      const edge = edges[e];
-      const a = nodes[edge.from];
-      const b = nodes[edge.to];
-      ep.setXYZ(e * 2, a.pos.x, a.pos.y, a.pos.z);
-      ep.setXYZ(e * 2 + 1, b.pos.x, b.pos.y, b.pos.z);
-      const dim = Math.min(a.dim, b.dim);
-      const hot =
-        (hoverIdx !== undefined && (edge.from === hoverIdx || edge.to === hoverIdx)) ||
-        (focusIdx !== undefined && (edge.from === focusIdx || edge.to === focusIdx));
-      tmpColor.set(EDGE_COLORS[edge.type] ?? "#ffffff").multiplyScalar((hot ? 0.85 : 0.28) * dim * a.scaleNow);
-      ec.setXYZ(e * 2, tmpColor.r, tmpColor.g, tmpColor.b);
-      ec.setXYZ(e * 2 + 1, tmpColor.r, tmpColor.g, tmpColor.b);
-    }
-    ep.needsUpdate = true;
-    ec.needsUpdate = true;
-
-    // ── Kamera-Verhalten ───────────────────────────────────
+  // Einmal passend einrahmen. Hover und Linsen lösen keine Kamerafahrt aus.
+  const lastFit = useRef<{ mode: GraphMode; focus: number; width: number; height: number } | null>(null);
+  useLayoutEffect(() => {
     const controls = controlsRef.current;
-    if (controls) {
-      if (focusId && lensIdx !== undefined && !reduced) {
-        tmpV2.copy(nodes[lensIdx].pos);
-        controls.target.lerp(tmpV2, Math.min(1, delta * 4));
-        tmpV.subVectors(camera.position, controls.target);
-        const deg = adj[lensIdx]?.length ?? 0;
-        const want = 4.0 + Math.max(0, 1 - Math.min(deg, 8) / 8) * 3.4;
-        if (tmpV.length() > want) {
-          tmpV.setLength(tmpV.length() + (want - tmpV.length()) * Math.min(1, delta * 3));
-          camera.position.copy(controls.target).add(tmpV);
-        }
-      } else if (mode === "thema" && themeId && !reduced) {
-        // Kamera gleitet zum Thema-Knoten
-        const ti = idToIndex.get(themeId);
-        if (ti !== undefined) {
-          tmpV2.copy(nodes[ti].pos);
-          controls.target.lerp(tmpV2, Math.min(1, delta * 2.5));
-          tmpV.subVectors(camera.position, controls.target);
-          const want = 8.5;
-          if (Math.abs(tmpV.length() - want) > 0.4) {
-            tmpV.setLength(tmpV.length() + (want - tmpV.length()) * Math.min(1, delta * 2));
-            camera.position.copy(controls.target).add(tmpV);
-          }
-        }
-      } else if (mode === "stammbaum" && clock - sim.current.lastInteract > 4 && !reduced) {
-        // Kamera entlang der Jahr-Linie
-        const x = Math.sin(clock * 0.12) * 9;
-        tmpV2.set(x, 0, 0);
-        controls.target.lerp(tmpV2, Math.min(1, delta * 0.8));
-        tmpV.set(x, 2.5, 15);
-        camera.position.lerp(tmpV, Math.min(1, delta * 0.6));
+    if (!controls || !(camera instanceof THREE.PerspectiveCamera)) return;
+    const sameViewport = lastFit.current?.width === size.width && lastFit.current?.height === size.height;
+    if (lastFit.current?.mode === mode && sameViewport) {
+      if (focusIndex < 0) {
+        lastFit.current.focus = -1;
+        return;
       }
-      controls.autoRotate = mode === "constellation" && !focusId && !reduced;
-      controls.autoRotateSpeed = 0.35;
-      controls.update();
+      if (lastFit.current.focus === focusIndex) return;
     }
+    const indices = focusIndex >= 0 ? [focusIndex, ...adjacent[focusIndex]] : nodes.map((_, i) => i);
+    const bounds = new THREE.Box3();
+    indices.forEach((i) => bounds.expandByPoint(positions[i]));
+    const center = bounds.getCenter(new THREE.Vector3());
+    const direction = camera.position.clone().sub(controls.target).normalize();
+    if (!direction.lengthSq()) direction.set(0, 0, 1);
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+    let width = 0, height = 0, depth = 0;
+    indices.forEach((i) => {
+      const relative = positions[i].clone().sub(center);
+      width = Math.max(width, Math.abs(relative.dot(right)) + 1.5);
+      height = Math.max(height, Math.abs(relative.dot(up)) + 1.5);
+      depth = Math.max(depth, Math.abs(relative.dot(direction)));
+    });
+    const tangent = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const aspect = Math.max(0.25, size.width / Math.max(1, size.height));
+    const distance = Math.max(8, Math.max(height / tangent, width / (tangent * aspect)) * 1.12 + depth + 2);
+    controls.target.copy(center);
+    camera.position.copy(center).addScaledVector(direction, distance);
+    camera.far = Math.max(500, distance * 4);
+    camera.updateProjectionMatrix();
+    controls.update();
+    lastFit.current = { mode, focus: focusIndex, width: size.width, height: size.height };
+    labelDirty.current = true;
+  }, [camera, mode, focusIndex, nodes, positions, adjacent, size.width, size.height]);
 
-    // ── Pfad-Animation (Lichtpuls) ─────────────────────────
-    const pulse = pulseMeshRef.current;
-    if (pulse && pulsePathIdx && pulsePathIdx.length >= 2) {
-      if (sim.current.pulseT >= 0) {
-        sim.current.pulseT += delta / (pulsePathIdx.length * 1.15);
-        const total = sim.current.pulseT;
-        if (total >= 1) {
-          sim.current.pulseT = -1;
-          pulse.visible = false;
-          onPulseEnd();
-        } else {
-          pulse.visible = true;
-          const segCount = pulsePathIdx.length - 1;
-          const seg = Math.min(segCount - 1, Math.floor(total * segCount));
-          const segT = total * segCount - seg;
-          const a = nodes[pulsePathIdx[seg]].pos;
-          const b = nodes[pulsePathIdx[seg + 1]].pos;
-          tmpV.lerpVectors(a, b, segT);
-          pulse.position.copy(tmpV);
-          const sc = 1 + 0.4 * Math.sin(total * Math.PI * segCount * 2);
-          pulse.scale.setScalar(sc);
-          // zurückgelegten Pfad als Lichtlinie zeichnen
-          const pp = pulseGeo.attributes.position as THREE.BufferAttribute;
-          const segsDraw = Math.floor(total * segCount * 10);
-          let count = 0;
-          for (let s = 0; s < seg; s++) {
-            const na = nodes[pulsePathIdx[s]].pos;
-            const nb = nodes[pulsePathIdx[s + 1]].pos;
-            for (let k = 0; k < 10 && count < 64; k++, count++) {
-              tmpV2.lerpVectors(na, nb, k / 10);
-              pp.setXYZ(count, tmpV2.x, tmpV2.y, tmpV2.z);
-            }
-          }
-          for (let k = 0; k <= (segsDraw % 10) && count < 64; k++, count++) {
-            tmpV2.lerpVectors(a, b, k / 10);
-            pp.setXYZ(count, tmpV2.x, tmpV2.y, tmpV2.z);
-          }
-          pp.needsUpdate = true;
-          pulseGeo.setDrawRange(0, Math.max(count, 2));
-        }
+  // Ein explizit angeforderter Pfad bleibt kompatibel, startet nie von selbst.
+  const pulseIndices = useMemo(() => (pulsePath ?? []).flatMap((id) => index.has(id) ? [index.get(id)!] : []), [pulsePath, index]);
+  const pulseTime = useRef(0);
+  const pulseRunning = useRef(false);
+  useEffect(() => {
+    pulseTime.current = 0;
+    pulseRunning.current = !reduced && pulseIndices.length > 1;
+    if (pulseRef.current) pulseRef.current.visible = pulseRunning.current;
+    if (reduced && pulseIndices.length > 1) onPulseEnd();
+  }, [pulseIndices, pulseNonce, reduced, onPulseEnd]);
+
+  useFrame((_, delta) => {
+    if (pulseRunning.current && pulseRef.current) {
+      pulseTime.current += Math.min(delta, 0.1) / 1.15;
+      const segment = Math.floor(pulseTime.current);
+      if (segment >= pulseIndices.length - 1) {
+        pulseRunning.current = false;
+        pulseRef.current.visible = false;
+        onPulseEnd();
       } else {
-        pulse.visible = false;
+        pulseRef.current.position.copy(positions[pulseIndices[segment]])
+          .lerp(positions[pulseIndices[segment + 1]], pulseTime.current - segment);
+      }
+    }
+    camera.updateMatrixWorld();
+    const view = [...camera.matrixWorld.elements, ...camera.projectionMatrix.elements, size.width, size.height];
+    if (!labelDirty.current && view.every((value, i) => Math.abs(value - previousView.current[i]) < 0.00001)) return;
+    previousView.current = view;
+    labelDirty.current = false;
+    labels.forEach(({ sprite }) => { sprite.visible = false; });
+    if (!(camera instanceof THREE.PerspectiveCamera) || size.width <= 0 || size.height <= 0) return;
+    const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+    const forward = camera.getWorldDirection(new THREE.Vector3());
+    const tangent = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const pixelsAt = (position: THREE.Vector3) => 2 * Math.max(0.1, position.clone().sub(camera.position).dot(forward)) * tangent / size.height;
+    const nodeRects = nodes.flatMap((n, i) => {
+      if (!visible[i]) return [];
+      const point = positions[i].clone().project(camera);
+      if (point.z < -1 || point.z > 1) return [];
+      const x = (point.x + 1) * size.width / 2, y = (1 - point.y) * size.height / 2;
+      const radius = Math.max(4, n.size / pixelsAt(positions[i])) + 2;
+      return [{ i, left: x - radius, top: y - radius, right: x + radius, bottom: y + radius }];
+    });
+    const occupied: Rect[] = [];
+    const limit = Math.min(64, Math.max(12, Math.floor(size.width * size.height / 5600)));
+    for (const label of candidates) {
+      if (occupied.length >= limit) break;
+      const point = label.position.clone().project(camera);
+      if (point.z < -1 || point.z > 1) continue;
+      const x = (point.x + 1) * size.width / 2, y = (1 - point.y) * size.height / 2;
+      const pixel = pixelsAt(label.position);
+      const radius = label.nodeIndex >= 0 ? nodes[label.nodeIndex].size / pixel + 7 : 0;
+      const vertical = radius + label.height / 2 + 3, horizontal = radius + label.width / 2 + 3;
+      const offsets = label.nodeIndex < 0 ? [[0, 0], [0, -28], [0, 28]] :
+        [[0, -vertical], [0, vertical], [horizontal, 0], [-horizontal, 0], [horizontal, -vertical], [-horizontal, -vertical]];
+      for (const [dx, dy] of offsets) {
+        const rect = { left: x + dx - label.width / 2 - 3, right: x + dx + label.width / 2 + 3,
+          top: y + dy - label.height / 2 - 3, bottom: y + dy + label.height / 2 + 3 };
+        if (rect.left < 8 || rect.right > size.width - 8 || rect.top < 8 || rect.bottom > size.height - 8) continue;
+        if (occupied.some((other) => intersects(rect, other)) || nodeRects.some((other) => other.i !== label.nodeIndex && intersects(rect, other))) continue;
+        label.sprite.position.copy(label.position).addScaledVector(right, dx * pixel).addScaledVector(up, -dy * pixel);
+        label.sprite.scale.set(label.width * pixel, label.height * pixel, 1);
+        label.sprite.visible = true;
+        occupied.push(rect);
+        break;
       }
     }
   });
 
+  useEffect(() => () => { document.body.style.cursor = ""; }, []);
   return (
     <>
-      <ambientLight intensity={0.4} />
-      <pointLight position={[6, 8, 6]} intensity={40} color="#e2a35c" />
-      <pointLight position={[-8, -4, -6]} intensity={25} color="#8fd8cf" />
-
-      <instancedMesh
-        ref={meshRef}
-        args={[undefined, undefined, nodes.length]}
-        onPointerMove={(e) => {
-          e.stopPropagation();
-          const i = e.instanceId;
-          if (i === undefined) return;
-          const d = nodes[i].data;
-          if (d.id !== hoverId) {
-            onHover({ id: d.id, label: d.label, type: d.type });
-            document.body.style.cursor = "pointer";
-          }
+      <instancedMesh ref={meshRef} args={[undefined, undefined, nodes.length]} frustumCulled={false}
+        onPointerMove={(event) => {
+          const i = event.instanceId;
+          if (i === undefined || !visible[i]) return;
+          event.stopPropagation();
+          const node = nodes[i].data;
+          if (hoverId !== node.id) onHover({ id: node.id, label: node.label, type: node.type });
+          document.body.style.cursor = "pointer";
         }}
-        onPointerOut={() => {
-          onHover(null);
-          document.body.style.cursor = "";
-        }}
-        onClick={(e) => {
-          e.stopPropagation();
-          const i = e.instanceId;
-          if (i === undefined) return;
-          const d = nodes[i].data;
-          onFocus(focusId === d.id ? null : d.id);
-        }}
-      >
+        onPointerOut={() => { onHover(null); document.body.style.cursor = ""; }}
+        onClick={(event) => {
+          const i = event.instanceId;
+          if (i === undefined || !visible[i]) return;
+          event.stopPropagation();
+          onFocus(focusId === nodes[i].data.id ? null : nodes[i].data.id);
+        }}>
         <sphereGeometry args={[1, 20, 20]} />
         <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
-
-      {/* Halo-Schicht */}
-      <points geometry={haloGeo}>
-        <pointsMaterial
-          size={0.85}
-          vertexColors
-          transparent
-          opacity={0.5}
-          sizeAttenuation
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-        />
-      </points>
-
-      {/* Kanten */}
-      <lineSegments geometry={edgeGeo}>
-        <lineBasicMaterial
-          vertexColors
-          transparent
-          opacity={0.75}
-          depthWrite={false}
-          blending={THREE.AdditiveBlending}
-          toneMapped={false}
-        />
+      <lineSegments geometry={edgeGeometry} frustumCulled={false}>
+        <lineBasicMaterial vertexColors transparent opacity={0.65} depthWrite={false} toneMapped={false} blending={THREE.AdditiveBlending} />
       </lineSegments>
-
-      {/* Lichtpuls für Pfad-Animation */}
-      <mesh ref={pulseMeshRef} visible={false}>
-        <sphereGeometry args={[0.22, 16, 16]} />
-        <meshBasicMaterial color="#ffe9c4" toneMapped={false} transparent opacity={0.95} />
+      <mesh ref={pulseRef} visible={false}>
+        <sphereGeometry args={[0.2, 16, 16]} />
+        <meshBasicMaterial color="#ffe9c4" toneMapped={false} />
       </mesh>
-      <lineSegments geometry={pulseGeo}>
-        <lineBasicMaterial color="#ffd9a0" transparent opacity={0.85} depthWrite={false} blending={THREE.AdditiveBlending} toneMapped={false} />
-      </lineSegments>
-
-      <group>
-        {labels.map((s, i) => (s ? <primitive key={i} object={s} /> : null))}
-        {portraits.map((s, i) => (s ? <primitive key={`p${i}`} object={s} /> : null))}
-      </group>
-
-      <OrbitControls
-        ref={controlsRef}
-        makeDefault
-        enablePan
-        enableZoom
-        minDistance={2.5}
-        maxDistance={30}
-        enableDamping
-        dampingFactor={0.08}
-      />
+      <group>{labels.map(({ sprite }, i) => <primitive key={i} object={sprite} />)}</group>
+      <OrbitControls ref={controlsRef} makeDefault enablePan enableZoom enableRotate
+        autoRotate={false} enableDamping={false} minDistance={3} maxDistance={400} />
     </>
   );
 });
