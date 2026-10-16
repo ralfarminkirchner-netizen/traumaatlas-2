@@ -11,6 +11,9 @@ import {
   type IslandId, MIN_ZOOM, MAX_ZOOM,
 } from "./world";
 import { waterSplat, setWaterCalm, isFluidActive } from "./WaterCanvas";
+import { useWelt, setWelt } from "@/universe/useWorld";
+import { WELTEN } from "@/universe/worlds";
+import { Eclipse } from "lucide-react";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { webgl2Available } from "@/hooks/use-webgl";
@@ -704,6 +707,8 @@ function Hud({ onSail }: { onSail: (id: IslandId) => void }) {
             : "Wildlinge treiben um die Inseln — geh ihnen nah"}
         </p>
         <GamingHint />
+        {/* Weltwechsel — Einladung, nie ein Befehl (PDA-kompatibel) */}
+        <WeltToggle />
         <DiveHint />
       </div>
 
@@ -801,6 +806,28 @@ function GamingHint() {
     <p className="mt-1 text-[10px] tracking-[0.2em] text-white/25">
       {gaming ? "Pfeile: direkte Fahrt — G: Rennspiel" : "WASD: Rennspiel — G: direkte Pfeile"}
     </p>
+  );
+}
+/** Weltwechsel (Einladung): die Schattenwelt hält das Meer in tiefer Nacht;
+ *  der Rückweg steht immer offen und führt zum selben Ort. */
+function WeltToggle() {
+  const welt = useWelt();
+  const isShadow = welt === "schatten";
+  return (
+    <button
+      type="button"
+      aria-pressed={isShadow}
+      title={isShadow ? WELTEN.schatten.rueckweg : WELTEN.schatten.kicker}
+      onClick={() => setWelt(isShadow ? "meer" : "schatten")}
+      className={`mt-2 flex items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] tracking-[0.2em] backdrop-blur transition-colors ${
+        isShadow
+          ? "border-[#b7a8d9]/50 bg-[#0d0a18]/70 text-[#d9cff2]"
+          : "border-white/15 bg-[#0d0a07]/60 text-white/55 hover:border-white/30 hover:text-white/80"
+      }`}
+    >
+      <Eclipse size={11} aria-hidden="true" />
+      {isShadow ? "Schattenwelt — zurück zur Tageswelt" : "Schattenwelt betreten (andere Lesart)"}
+    </button>
   );
 }
 

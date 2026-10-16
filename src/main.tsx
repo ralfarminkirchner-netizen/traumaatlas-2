@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import '@fontsource-variable/fraunces'
 import '@fontsource-variable/inter'
 import './index.css'
+import '@/universe/qa'
 import App from './App.tsx'
 
 createRoot(document.getElementById('root')!).render(

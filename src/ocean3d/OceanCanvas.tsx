@@ -25,6 +25,7 @@ import { FishSchool } from "./FishSchool";
 import { Bubbles } from "./Bubbles";
 import { DeepNodes } from "./DeepNodes";
 import { dayState, stepDay, sampleDay, celestialDirAt } from "./daynight";
+import { useWelt } from "@/universe/useWorld";
 import { diveState } from "./dive";
 
 const _v = new THREE.Vector3();
@@ -39,6 +40,11 @@ const _hit = new THREE.Vector3();
 function DayLightBridge() {
   const scene = useThree((s) => s.scene);
   const gl = useThree((s) => s.gl);
+  const welt = useWelt();
+  // Schattenwelt heftet das Meer weich in tiefe Nacht (daynight.ts)
+  useEffect(() => {
+    dayState.shadow = welt === "schatten";
+  }, [welt]);
   const _uwFog = useRef(new THREE.Color("#0b2c30"));
   const _uwHemi = useRef(new THREE.Color("#1d4a4a"));
   // QA-/Debug-Spiegel: die Szene am Window (Ausblend-Diagnose, Tiefen-Checks)

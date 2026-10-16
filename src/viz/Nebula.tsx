@@ -40,7 +40,12 @@ const fragmentShader = /* glsl */ `
 `;
 
 /** 10.000-Partikel-Nebel, in dessen Mitte die Körperform schwebt. */
-export function Nebula({ count = 10000, radius = 9 }: { count?: number; radius?: number }) {
+export function Nebula({ count = 10000, radius = 9, colorWarm = "#e2a35c", colorCool = "#8b93c9" }: {
+  count?: number;
+  radius?: number;
+  colorWarm?: string;
+  colorCool?: string;
+}) {
   const mobile = useIsMobile();
   const reduced = useReducedMotion();
   const pointsRef = useRef<THREE.Points>(null);
@@ -64,11 +69,11 @@ export function Nebula({ count = 10000, radius = 9 }: { count?: number; radius?:
     const uni = {
       uTime: { value: 0 },
       uSize: { value: mobile ? 1.6 : 2.4 },
-      uColorWarm: { value: new THREE.Color("#e2a35c") },
-      uColorCool: { value: new THREE.Color("#8b93c9") },
+      uColorWarm: { value: new THREE.Color(colorWarm) },
+      uColorCool: { value: new THREE.Color(colorCool) },
     };
     return { geometry: geo, uniforms: uni };
-  }, [n, radius, mobile]);
+  }, [n, radius, mobile, colorWarm, colorCool]);
 
   useFrame((_, delta) => {
     if (!reduced) uniforms.uTime.value += delta;

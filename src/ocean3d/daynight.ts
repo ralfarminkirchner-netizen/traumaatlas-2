@@ -13,9 +13,18 @@ export const dayState = {
   phase: 0.82, // Start: späte Nacht, niedriger Mond (bewahrt die TA4-Stimmung)
   paused: false,
   resumeAt: 0,
+  /** Schattenwelt-Anheftung: das Meer wird weich in tiefe Nacht geführt. */
+  shadow: false,
 };
 
 export function stepDay(dt: number) {
+  if (dayState.shadow) {
+    // Wickel-sicher Richtung Mitternacht (phase 0) gleiten — ~12 s Übergang.
+    const diff = ((0 - dayState.phase + 0.5) % 1 + 1) % 1 - 0.5;
+    const schritt = Math.sign(diff) * Math.min(Math.abs(diff), dt * 0.08);
+    dayState.phase = ((dayState.phase + schritt) % 1 + 1) % 1;
+    return;
+  }
   if (dayState.paused) {
     if (dayState.resumeAt && performance.now() > dayState.resumeAt) dayState.paused = false;
     else return;

@@ -2,9 +2,14 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { EffectComposer, Bloom } from "@react-three/postprocessing";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { nodeTypeMeta, type NodeType } from "@/data/graph";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
+import { BASIS } from "@/universe/baseEmbedding";
+import { METRIKEN, projizierePunkt, atmungsPhase } from "@/universe/metrics";
+import { transduziere, type WeltId } from "@/universe/transduction";
+import { Nebula } from "@/viz/Nebula";
 import { EDGE_COLORS, buildEdgeIndex, buildSimNodes, shortLabel, type GraphMode } from "./layout";
 export type { GraphMode };
 
@@ -25,6 +30,8 @@ interface GraphSceneProps {
   pulsePath: string[] | null;
   pulseNonce: number;
   onPulseEnd: () => void;
+  /** Schicht-2/3: Metrik + Transduktion der Welt. "meer" = bisheriges Aussehen. */
+  world?: WeltId;
 }
 
 type Rect = { left: number; top: number; right: number; bottom: number };
@@ -37,12 +44,40 @@ type Label = {
   type: NodeType;
 };
 
+/** Schattenwelt-Familie: silber-flieder statt Tagesfarben. */
+const SHADOW = {
+  nodeTint: new THREE.Color("#cdc2e8"),
+  edgeTint: new THREE.Color("#b7a8d9"),
+  labelBg: "rgba(9, 6, 18, 0.9)",
+  labelText: "#d9cff2",
+  labelGroup: "#b7a8d9",
+};
+
+/** Radialer Glow (Canvas-Textur, einmal für alle Instanzen). */
+function makeGlowTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+  g.addColorStop(0, "rgba(255,255,255,0.9)");
+  g.addColorStop(0.25, "rgba(214,199,244,0.42)");
+  g.addColorStop(0.6, "rgba(160,140,210,0.12)");
+  g.addColorStop(1, "rgba(120,100,180,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+const _o = new THREE.Object3D();
+
 function intersects(a: Rect, b: Rect) {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
 
 /** Namen bleiben in Bildschirm-Pixeln lesbar, unabhängig vom Kartenmaßstab. */
-function makeLabel(text: string, group: boolean, position: THREE.Vector3, nodeIndex: number, type: NodeType): Label {
+function makeLabel(text: string, group: boolean, position: THREE.Vector3, nodeIndex: number, type: NodeType, shadow = false): Label {
   const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const font = `${group ? 600 : 500} 28px Inter, system-ui, sans-serif`;
@@ -51,11 +86,11 @@ function makeLabel(text: string, group: boolean, position: THREE.Vector3, nodeIn
   canvas.height = 48;
   ctx.font = font;
   ctx.textBaseline = "middle";
-  ctx.fillStyle = "rgba(14, 13, 21, 0.86)";
+  ctx.fillStyle = shadow ? SHADOW.labelBg : "rgba(14, 13, 21, 0.86)";
   ctx.beginPath();
   ctx.roundRect(0, 0, canvas.width, canvas.height, 12);
   ctx.fill();
-  ctx.fillStyle = group ? nodeTypeMeta[type].color : "#f3e7d3";
+  ctx.fillStyle = shadow ? (group ? SHADOW.labelGroup : SHADOW.labelText) : group ? nodeTypeMeta[type].color : "#f3e7d3";
   ctx.fillText(text, 16, 25);
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -70,10 +105,11 @@ function makeLabel(text: string, group: boolean, position: THREE.Vector3, nodeIn
 
 export const GraphScene = memo(function GraphScene({
   mode, themeId, hoverId, onHover, focusId, onFocus, visibleTypes = null,
-  pulsePath, pulseNonce, onPulseEnd,
+  pulsePath, pulseNonce, onPulseEnd, world = "meer",
 }: GraphSceneProps) {
   const { camera, size } = useThree();
   const reduced = useReducedMotion();
+  const isShadow = world === "schatten";
   const nodes = useMemo(() => buildSimNodes(), []);
   const index = useMemo(() => new Map(nodes.map((n, i) => [n.data.id, i])), [nodes]);
   const edges = useMemo(() => buildEdgeIndex(index), [index]);
@@ -82,7 +118,48 @@ export const GraphScene = memo(function GraphScene({
     edges.forEach(({ from, to }) => { result[from].add(to); result[to].add(from); });
     return result;
   }, [nodes, edges]);
-  const positions = useMemo(() => nodes.map((n) => mode === "stammbaum" ? n.modePos : n.pos), [nodes, mode]);
+  // Tageswelt-Konstellation = die bewährte Sim (stehendes Fundament);
+  // Schattenwelt = projizierte Universe-Basis. Der Wechsel morpht weich
+  // zwischen beiden Lesarten derselben Topologie (Gummiband).
+  const positions = useMemo(
+    () => nodes.map((n) => (mode === "stammbaum" ? n.modePos.clone() : n.pos.clone())),
+    [nodes, mode],
+  );
+  const targets = useMemo(() => {
+    // Gleiche Bildgröße in beiden Lesarten: Schatten-Projektion auf den
+    // Bounding-Radius der Tageswelt-Konstellation normiert (Gummiband bleibt
+    // in sich verzerrt, die Karte füllt dasselbe Feld).
+    const tagesRadius = Math.max(...nodes.map((n) => n.pos.length()));
+    const roh = nodes.map((n) => {
+      const b = BASIS.get(n.data.id);
+      if (!b) return null;
+      const p = projizierePunkt(METRIKEN.schatten, b, n.data.id, 0);
+      return new THREE.Vector3(p.x, p.y, p.z);
+    });
+    const rohRadius = Math.max(...roh.map((v) => (v ? v.length() : 0)), 1e-6);
+    const skala = tagesRadius / rohRadius;
+    return nodes.map((n, i) => {
+      if (mode === "stammbaum") return n.modePos;
+      if (world === "schatten" && roh[i]) {
+        const v = roh[i]!;
+        return new THREE.Vector3(v.x * skala, v.y * skala, v.z * skala);
+      }
+      return n.pos;
+    });
+  }, [nodes, mode, world]);
+  const atmen = useMemo(
+    () =>
+      nodes.map((n) => {
+        if (world !== "schatten") return null;
+        const b = BASIS.get(n.data.id);
+        if (!b) return null;
+        // Ziel Richtung Ursprung, nur Radius skaliert (atmender Deltavektor-Basis)
+        return { bx: b.x, by: b.y, bz: b.z, id: n.data.id };
+      }),
+    [nodes, world],
+  );
+  const morphT = useRef(1); // 0..1 — Weltmorph, 1 = Ziel erreicht
+  useEffect(() => { morphT.current = 0; }, [world, mode]);
   const focusIndex = focusId ? index.get(focusId) ?? -1 : -1;
   const hoverIndex = hoverId ? index.get(hoverId) ?? -1 : -1;
   const themeSet = useMemo(() => {
@@ -100,6 +177,8 @@ export const GraphScene = memo(function GraphScene({
     ));
   }, [nodes, visibleTypes, focusIndex, adjacent, themeSet]);
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const glowRef = useRef<THREE.InstancedMesh>(null);
+  const glowTexture = useMemo(() => makeGlowTexture(), []);
   const controlsRef = useRef<OrbitControlsImpl>(null);
   const pulseRef = useRef<THREE.Mesh>(null);
   const edgeGeometry = useMemo(() => {
@@ -114,46 +193,43 @@ export const GraphScene = memo(function GraphScene({
     return geometry;
   }, [edges, positions]);
 
-  // Die Instanzen ändern nur Sichtbarkeit/Farbe, niemals die Lage im Graphen.
+  // Farben/Sichtbarkeit (Layout) — Lage/Matrizen laufen im useFrame (Atmen/Morph).
   useLayoutEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
-    const object = new THREE.Object3D();
     const color = new THREE.Color();
     nodes.forEach((n, i) => {
       const related = focusIndex < 0 || focusIndex === i || adjacent[focusIndex].has(i);
-      object.position.copy(positions[i]);
-      object.scale.setScalar(visible[i] ? n.size * (i === focusIndex ? 1.12 : 1) : 0);
-      object.updateMatrix();
-      mesh.setMatrixAt(i, object.matrix);
       color.copy(n.color).multiplyScalar(related ? 1 : 0.3);
+      if (isShadow) color.lerp(SHADOW.nodeTint, 0.55);
       if (i === hoverIndex) color.lerp(new THREE.Color("#fff4df"), 0.25);
       mesh.setColorAt(i, color);
     });
-    mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    const edgePositions = edgeGeometry.getAttribute("position") as THREE.BufferAttribute;
     const colors = edgeGeometry.getAttribute("color") as THREE.BufferAttribute;
     let edgeCount = 0;
     edges.forEach(({ from, to, type }) => {
       if (!visible[from] || !visible[to]) return;
       const incident = from === focusIndex || to === focusIndex;
-      const strength = focusIndex < 0 ? 0.32 : incident ? 0.9 : 0.06;
-      color.set(EDGE_COLORS[type] ?? "#9aa8c7").multiplyScalar(strength);
+      const strength = focusIndex < 0 ? (isShadow ? 0.22 : 0.32) : incident ? 0.9 : 0.06;
+      color.set(EDGE_COLORS[type] ?? "#9aa8c7");
+      if (isShadow) color.lerp(SHADOW.edgeTint, 0.72);
+      color.multiplyScalar(strength);
       const first = edgeCount * 2;
-      edgePositions.setXYZ(first, positions[from].x, positions[from].y, positions[from].z);
-      edgePositions.setXYZ(first + 1, positions[to].x, positions[to].y, positions[to].z);
       colors.setXYZ(first, color.r, color.g, color.b);
       colors.setXYZ(first + 1, color.r, color.g, color.b);
       edgeCount++;
     });
     edgeGeometry.setDrawRange(0, edgeCount * 2);
-    edgePositions.needsUpdate = true;
     colors.needsUpdate = true;
-  }, [nodes, positions, visible, focusIndex, hoverIndex, adjacent, edges, edgeGeometry]);
+  }, [nodes, visible, focusIndex, hoverIndex, adjacent, edges, edgeGeometry, isShadow]);
 
   const labels = useMemo(() => {
-    const result = nodes.map((n, i) => makeLabel(shortLabel(n.data.id, n.data.label), false, positions[i], i, n.data.type));
+    const result = nodes.map((n, i) => {
+      const lesart = isShadow ? transduziere("schatten", n.data) : null;
+      const text = shortLabel(n.data.id, lesart?.label ?? n.data.label);
+      return makeLabel(text, false, positions[i], i, n.data.type, isShadow);
+    });
     if (mode !== "stammbaum") {
       const types = [...new Set(nodes.map((n) => n.data.type))];
       types.forEach((type) => {
@@ -162,11 +238,11 @@ export const GraphScene = memo(function GraphScene({
         indices.forEach((i) => center.add(positions[i]));
         center.divideScalar(indices.length);
         center.y = Math.max(...indices.map((i) => positions[i].y)) + 1.8;
-        result.push(makeLabel(nodeTypeMeta[type].label, true, center, -1, type));
+        result.push(makeLabel(nodeTypeMeta[type].label, true, center, -1, type, isShadow));
       });
     }
     return result;
-  }, [nodes, positions, mode]);
+  }, [nodes, positions, mode, isShadow]);
   const candidates = useMemo(() => labels.filter((label) => {
     const i = label.nodeIndex;
     if (i < 0) return focusIndex < 0 && nodes.some((n, j) => n.data.type === label.type && visible[j]);
@@ -180,7 +256,7 @@ export const GraphScene = memo(function GraphScene({
   }), [labels, visible, visibleTypes, focusIndex, hoverIndex, adjacent, nodes, mode]);
   const labelDirty = useRef(true);
   const previousView = useRef<number[]>([]);
-  useLayoutEffect(() => { labelDirty.current = true; }, [candidates, positions, visible]);
+  useLayoutEffect(() => { labelDirty.current = true; }, [candidates, positions, visible, world]);
   useEffect(() => () => labels.forEach(({ sprite }) => {
     const material = sprite.material as THREE.SpriteMaterial;
     material.map?.dispose();
@@ -190,6 +266,7 @@ export const GraphScene = memo(function GraphScene({
 
   // Einmal passend einrahmen. Hover und Linsen lösen keine Kamerafahrt aus.
   const lastFit = useRef<{ mode: GraphMode; focus: number; width: number; height: number } | null>(null);
+  const breathT = useRef(0);
   useLayoutEffect(() => {
     const controls = controlsRef.current;
     if (!controls || !(camera instanceof THREE.PerspectiveCamera)) return;
@@ -226,7 +303,7 @@ export const GraphScene = memo(function GraphScene({
     controls.update();
     lastFit.current = { mode, focus: focusIndex, width: size.width, height: size.height };
     labelDirty.current = true;
-  }, [camera, mode, focusIndex, nodes, positions, adjacent, size.width, size.height]);
+  }, [camera, mode, world, focusIndex, nodes, positions, adjacent, size.width, size.height]);
 
   // Ein explizit angeforderter Pfad bleibt kompatibel, startet nie von selbst.
   const pulseIndices = useMemo(() => (pulsePath ?? []).flatMap((id) => index.has(id) ? [index.get(id)!] : []), [pulsePath, index]);
@@ -240,6 +317,66 @@ export const GraphScene = memo(function GraphScene({
   }, [pulseIndices, pulseNonce, reduced, onPulseEnd]);
 
   useFrame((_, delta) => {
+    // ── Weltmorph + Atmung (Schattenwelt atmet, 0.3 Hz, radial) ──
+    if (!reduced) breathT.current += delta;
+    morphT.current = Math.min(1, morphT.current + delta / 1.4);
+    const k = 1 - Math.pow(0.0015, Math.min(delta, 0.1));
+    const profil = METRIKEN.schatten;
+    let bewegt = morphT.current < 1;
+    for (let i = 0; i < nodes.length; i++) {
+      const t = targets[i];
+      let tx = t.x, ty = t.y, tz = t.z;
+      const a = atmen[i];
+      if (a && !reduced) {
+        const f = 1 + profil.breathAmp * Math.sin(2 * Math.PI * profil.breathHz * breathT.current + atmungsPhase(a.id));
+        tx *= f; ty *= f; tz *= f;
+        bewegt = true;
+      }
+      const p = positions[i];
+      p.x += (tx - p.x) * k;
+      p.y += (ty - p.y) * k;
+      p.z += (tz - p.z) * k;
+    }
+
+    // ── Instanzen (Kern) ──
+    const mesh = meshRef.current;
+    if (mesh) {
+      nodes.forEach((n, i) => {
+        _o.position.copy(positions[i]);
+        _o.scale.setScalar(visible[i] ? n.size * (i === focusIndex ? 1.12 : 1) : 0);
+        _o.updateMatrix();
+        mesh.setMatrixAt(i, _o.matrix);
+      });
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Glow (nur Schattenwelt) — billboards in Blickrichtung ──
+    const glow = glowRef.current;
+    if (glow) {
+      nodes.forEach((n, i) => {
+        _o.position.copy(positions[i]);
+        _o.quaternion.copy(camera.quaternion);
+        const s = isShadow && visible[i] ? n.size * 5.5 : 0;
+        _o.scale.set(s, s, 1);
+        _o.updateMatrix();
+        glow.setMatrixAt(i, _o.matrix);
+      });
+      glow.instanceMatrix.needsUpdate = true;
+    }
+
+    // ── Kanten-Positionen folgen den atmenden Knoten ──
+    const edgePositions = edgeGeometry.getAttribute("position") as THREE.BufferAttribute;
+    let edgeCount = 0;
+    edges.forEach(({ from, to }) => {
+      if (!visible[from] || !visible[to]) return;
+      edgePositions.setXYZ(edgeCount * 2, positions[from].x, positions[from].y, positions[from].z);
+      edgePositions.setXYZ(edgeCount * 2 + 1, positions[to].x, positions[to].y, positions[to].z);
+      edgeCount++;
+    });
+    edgeGeometry.setDrawRange(0, edgeCount * 2);
+    edgePositions.needsUpdate = true;
+    if (bewegt) labelDirty.current = true;
+
     if (pulseRunning.current && pulseRef.current) {
       pulseTime.current += Math.min(delta, 0.1) / 1.15;
       const segment = Math.floor(pulseTime.current);
@@ -301,6 +438,7 @@ export const GraphScene = memo(function GraphScene({
   useEffect(() => () => { document.body.style.cursor = ""; }, []);
   return (
     <>
+      {isShadow && <Nebula count={5200} radius={34} colorWarm="#8f7fb8" colorCool="#5f6f9f" />}
       <instancedMesh ref={meshRef} args={[undefined, undefined, nodes.length]} frustumCulled={false}
         onPointerMove={(event) => {
           const i = event.instanceId;
@@ -320,8 +458,13 @@ export const GraphScene = memo(function GraphScene({
         <sphereGeometry args={[1, 20, 20]} />
         <meshBasicMaterial toneMapped={false} />
       </instancedMesh>
+      <instancedMesh ref={glowRef} args={[undefined, undefined, nodes.length]} frustumCulled={false} renderOrder={4}>
+        <planeGeometry args={[1, 1]} />
+        <meshBasicMaterial map={glowTexture} transparent depthWrite={false} toneMapped={false}
+          blending={THREE.AdditiveBlending} color="#b7a8d9" opacity={0.85} />
+      </instancedMesh>
       <lineSegments geometry={edgeGeometry} frustumCulled={false}>
-        <lineBasicMaterial vertexColors transparent opacity={0.65} depthWrite={false} toneMapped={false} blending={THREE.AdditiveBlending} />
+        <lineBasicMaterial vertexColors transparent opacity={isShadow ? 0.5 : 0.65} depthWrite={false} toneMapped={false} blending={THREE.AdditiveBlending} />
       </lineSegments>
       <mesh ref={pulseRef} visible={false}>
         <sphereGeometry args={[0.2, 16, 16]} />
@@ -330,6 +473,11 @@ export const GraphScene = memo(function GraphScene({
       <group>{labels.map(({ sprite }, i) => <primitive key={i} object={sprite} />)}</group>
       <OrbitControls ref={controlsRef} makeDefault enablePan enableZoom enableRotate
         autoRotate={false} enableDamping={false} minDistance={3} maxDistance={400} />
+      {isShadow && !reduced && (
+        <EffectComposer>
+          <Bloom mipmapBlur intensity={0.9} luminanceThreshold={0.18} luminanceSmoothing={0.25} />
+        </EffectComposer>
+      )}
     </>
   );
 });

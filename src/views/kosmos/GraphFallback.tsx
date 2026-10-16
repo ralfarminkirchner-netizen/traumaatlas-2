@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { atlasGraph, neighborsOf, nodeTypeMeta, type NodeType } from "@/data/graph";
+import { transduziere, type WeltId } from "@/universe/transduction";
 import { buildSimNodes, EDGE_COLORS, type GraphMode } from "./layout";
 
 interface GraphFallbackProps {
@@ -8,11 +9,17 @@ interface GraphFallbackProps {
   visibleTypes: NodeType[] | null;
   focusId: string | null;
   onFocus: (id: string | null) => void;
+  world?: WeltId;
 }
 
 /** Dieselbe feste Karte und dieselben Linsen ohne WebGL oder Bewegung. */
-export function GraphFallback({ mode, themeId, visibleTypes, focusId, onFocus }: GraphFallbackProps) {
+export function GraphFallback({ mode, themeId, visibleTypes, focusId, onFocus, world = "meer" }: GraphFallbackProps) {
   const [hoverId, setHoverId] = useState<string | null>(null);
+  const isShadow = world === "schatten";
+  const lesartVon = (id: string) => {
+    const node = atlasGraph.nodes.find((n) => n.id === id);
+    return node ? transduziere(world, node) : null;
+  };
   const nodes = useMemo(buildSimNodes, []);
   const positions = useMemo(() => {
     const vectors = nodes.map((n) => mode === "stammbaum" ? n.modePos : n.pos);
@@ -68,15 +75,15 @@ export function GraphFallback({ mode, themeId, visibleTypes, focusId, onFocus }:
             onMouseEnter={() => setHoverId(n.id)} onMouseLeave={() => setHoverId(null)}
             onFocus={() => setHoverId(n.id)} onBlur={() => setHoverId(null)}>
             <circle cx={p.x} cy={p.y} r={14} fill="transparent" />
-            <circle cx={p.x} cy={p.y} r={selected ? 8 : 5} fill={nodeTypeMeta[n.type].color}
+            <circle cx={p.x} cy={p.y} r={selected ? 8 : 5} fill={isShadow ? "#c3b4e0" : nodeTypeMeta[n.type].color}
               opacity={hot ? 1 : 0.12} stroke={selected ? "#fff" : "transparent"} strokeWidth={2} />
             <circle cx={p.x} cy={p.y} r={11} fill="none" stroke="#fff" strokeWidth={2}
               className="opacity-0 group-focus-visible:opacity-100" />
           </g>;
         })}
         {hoverNode && <g aria-hidden="true">
-          <rect x={20} y={15} width={760} height={34} rx={6} fill="#151a27" />
-          <text x={32} y={38} fill="#fff" fontSize={15}>{hoverNode.label}</text>
+          <rect x={20} y={15} width={760} height={34} rx={6} fill={isShadow ? "#0d0a18" : "#151a27"} />
+          <text x={32} y={38} fill={isShadow ? "#d9cff2" : "#fff"} fontSize={15}>{lesartVon(hoverNode.id)?.label ?? hoverNode.label}</text>
         </g>}
       </svg>
     </div>

@@ -1,8 +1,11 @@
 import { useMemo, useState } from "react";
-import { RotateCcw } from "lucide-react";
+import { Eclipse, RotateCcw } from "lucide-react";
 import { atlasGraph, edgeTypeLabels, neighborsOf, nodeTypeMeta, type NodeType, type EdgeType } from "@/data/graph";
 import { methods } from "@/data/v1/methods";
 import { WebGLGate } from "@/viz/WebGLGate";
+import { useWelt, setWelt } from "@/universe/useWorld";
+import { WELTEN } from "@/universe/worlds";
+import { transduziere } from "@/universe/transduction";
 import { GraphScene, type HoverInfo, type GraphMode } from "./GraphScene";
 import { GraphFallback } from "./GraphFallback";
 import { NodeCard } from "./NodeCard";
@@ -31,6 +34,14 @@ export default function KosmosView() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [resetNonce, setResetNonce] = useState(0);
   const [showLegend, setShowLegend] = useState(false);
+  const welt = useWelt();
+  const isShadow = welt === "schatten";
+  const zielWelt = isShadow ? WELTEN.meer : WELTEN.schatten;
+  const lesart = (id: string) => {
+    const node = atlasGraph.nodes.find((n) => n.id === id);
+    if (!node) return null;
+    return transduziere(welt, node);
+  };
   const lens = LENSES[lensIndex];
   const lensCount = atlasGraph.nodes.filter((n) => !lens.types || lens.types.includes(n.type)).length;
   const sortedNodes = useMemo(() => [...atlasGraph.nodes].sort((a, b) => a.label.localeCompare(b.label, "de")), []);
@@ -41,8 +52,10 @@ export default function KosmosView() {
     <div className="mx-auto w-full max-w-[1440px] px-4 pb-16 sm:px-8">
       <section className="pt-6 sm:pt-10" aria-label="Kosmos des Atlas">
         <p className="max-w-3xl text-base leading-relaxed text-white/80">
-          {atlasGraph.nodes.length} Knoten, {atlasGraph.edges.length} Beziehungen. Die Karte steht still, bis du sie bewegst.
-          Wähle eine Linse oder einen Knoten, um seine Zusammenhänge zu erkunden.
+          {atlasGraph.nodes.length} Knoten, {atlasGraph.edges.length} Beziehungen.{" "}
+          {isShadow
+            ? "Dieselbe Karte — gelesen von der anderen Seite. Hier stehen nicht die Symptome, sondern das, was sie einst für dich getan haben. Dieselben Orte, dieselben Wege, umgedrehte Bedeutung."
+            : "Die Karte steht still, bis du sie bewegst. Wähle eine Linse oder einen Knoten, um seine Zusammenhänge zu erkunden."}
         </p>
         <div className="mt-6 flex flex-wrap items-center gap-2" role="group" aria-label="Linsen">
           <span className="mr-2 text-sm font-medium text-white/75">Linse</span>
@@ -79,24 +92,32 @@ export default function KosmosView() {
             onClick={() => { navigate(null); setResetNonce((n) => n + 1); }}>
             <RotateCcw size={15} aria-hidden="true" /> Ansicht einpassen
           </button>
+          <button type="button" aria-pressed={isShadow}
+            title={isShadow ? WELTEN.schatten.rueckweg : zielWelt.kicker}
+            onClick={() => setWelt(isShadow ? "meer" : "schatten")}
+            className={`${control} flex items-center gap-2 transition-colors ${isShadow ? "border-[#b7a8d9] bg-[#b7a8d9] text-[#14101e]" : "hover:bg-white/10"}`}>
+            <Eclipse size={15} aria-hidden="true" /> {isShadow ? zielWelt.label : zielWelt.label}
+          </button>
         </div>
         <p className="my-4 text-sm leading-relaxed text-white/75" aria-live="polite">
           {focusNode ? `${focusNode.label} · ${neighborsOf(focusNode.id).size} direkte Nachbarn. Die übrige Karte tritt zurück.`
             : `${lens.description} · ${lensCount} Knoten in dieser Linse. Die Anordnung bleibt beim Linsenwechsel erhalten.`}
         </p>
         <div className={`grid items-start gap-4 ${focusId ? "lg:grid-cols-[minmax(0,1fr)_320px]" : ""}`}>
-          <div className="relative min-w-0 overflow-hidden rounded-xl border border-white/20 bg-[#090c14]">
+          <div className="relative min-w-0 overflow-hidden rounded-xl border border-white/20 transition-colors duration-1000"
+            style={isShadow ? { background: "radial-gradient(120% 120% at 50% 30%, #0d0a1a 0%, #05030c 70%)", borderColor: "rgba(183,168,217,0.25)" } : { background: "#090c14" }}>
             <div className="relative h-[60vh] min-h-[380px] max-h-[760px] sm:h-[70vh] sm:min-h-[500px]">
               <WebGLGate className="absolute inset-0" fog={false}
-                fallback={<GraphFallback mode={mode} themeId={themeId} visibleTypes={lens.types} focusId={focusId} onFocus={navigate} />}
+                fallback={<GraphFallback mode={mode} themeId={themeId} visibleTypes={lens.types} focusId={focusId} onFocus={navigate} world={welt} />}
                 camera={{ position: [0, 0, 44], fov: 50 }}>
                 <GraphScene key={resetNonce} mode={mode} themeId={themeId} visibleTypes={lens.types}
                   hoverId={hover?.id ?? null} onHover={setHover} focusId={focusId} onFocus={navigate}
-                  pulsePath={null} pulseNonce={0} onPulseEnd={() => {}} />
+                  pulsePath={null} pulseNonce={0} onPulseEnd={() => {}} world={welt} />
               </WebGLGate>
-              {hover && <div className="pointer-events-none absolute bottom-4 left-4 right-4 w-fit max-w-[calc(100%-2rem)] rounded-lg border border-white/25 bg-[#151a27] px-3 py-2 text-sm text-white">
+              {hover && <div className="pointer-events-none absolute bottom-4 left-4 right-4 w-fit max-w-[calc(100%-2rem)] rounded-lg border px-3 py-2 text-sm transition-colors duration-700"
+                style={isShadow ? { background: "rgba(9,6,18,0.92)", borderColor: "rgba(183,168,217,0.3)", color: "#d9cff2" } : { background: "#151a27", borderColor: "rgba(255,255,255,0.25)", color: "#fff" }}>
                 <span className="mr-2 inline-block h-2 w-2 rounded-full" style={{ background: nodeTypeMeta[hover.type as NodeType]?.color }} />
-                {hover.label}
+                {lesart(hover.id)?.label ?? hover.label}
               </div>}
             </div>
             <p className="border-t border-white/15 px-4 py-3 text-xs leading-relaxed text-white/75">
@@ -104,7 +125,7 @@ export default function KosmosView() {
               Alle Knoten sind auch über „Knoten finden“ erreichbar.
             </p>
           </div>
-          {focusId && <NodeCard nodeId={focusId} onClose={() => navigate(null)} onNavigate={navigate} />}
+          {focusId && <NodeCard nodeId={focusId} onClose={() => navigate(null)} onNavigate={navigate} world={welt} />}
         </div>
         <button type="button" className={`${control} mt-5 hover:bg-white/10`} aria-expanded={showLegend}
           aria-controls="kosmos-legende" onClick={() => setShowLegend((v) => !v)}>

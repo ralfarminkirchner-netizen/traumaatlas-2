@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { ArrowUpRight, X } from "lucide-react";
 import { atlasGraph, edgeTypeLabels, nodeTypeMeta, type AtlasNode } from "@/data/graph";
+import { transduziere, type WeltId } from "@/universe/transduction";
 
 const nodesById = new Map(atlasGraph.nodes.map((node) => [node.id, node]));
 
@@ -14,10 +15,12 @@ interface NodeCardProps {
   onClose: () => void;
   /** Einen direkten Nachbarn auswählen. Die gemeinsame Kartierung bleibt erhalten. */
   onNavigate: (id: string) => void;
+  /** Schicht-3: Lesart der aktuellen Welt (Schattenwelt = Schutzfunktionen). */
+  world?: WeltId;
 }
 
 /** Ruhige Detailansicht mit allen direkten, gerichteten Beziehungen. */
-export function NodeCard({ nodeId, onClose, onNavigate }: NodeCardProps) {
+export function NodeCard({ nodeId, onClose, onNavigate, world = "meer" }: NodeCardProps) {
   const cardRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -73,13 +76,14 @@ export function NodeCard({ nodeId, onClose, onNavigate }: NodeCardProps) {
 
   if (!node) return null;
   const meta = nodeTypeMeta[node.type];
+  const lesart = transduziere(world, node);
   const neighborCount = relatedGroups.reduce((sum, group) => sum + group.entries.length, 0);
 
   return (
     <aside
       ref={cardRef}
       className="relative min-w-0 w-full rounded-2xl border border-white/15 bg-[#15131b] p-5 lg:max-h-[76vh] lg:overflow-y-auto scrollbar-thin"
-      aria-label={`Details zu ${node.label}`}
+      aria-label={`Details zu ${lesart?.label ?? node.label}`}
     >
       <div className="flex items-start justify-between gap-3">
         <p className="pt-3 text-sm font-medium" style={{ color: meta.color }}>{meta.label}</p>
@@ -98,7 +102,7 @@ export function NodeCard({ nodeId, onClose, onNavigate }: NodeCardProps) {
         tabIndex={-1}
         className="font-display mt-2 text-2xl leading-tight text-[#f3e7d3] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#e2a35c]"
       >
-        {node.label}
+        {lesart?.label ?? node.label}
       </h3>
       {node.sub && <p className="mt-2 text-sm leading-relaxed text-white/75">{node.sub}</p>}
 
@@ -117,7 +121,7 @@ export function NodeCard({ nodeId, onClose, onNavigate }: NodeCardProps) {
         </div>
       )}
 
-      {node.summary && <p className="mt-4 text-sm leading-relaxed text-white/85">{node.summary}</p>}
+      {(node.summary || lesart?.summary) && <p className="mt-4 text-sm leading-relaxed text-white/85">{lesart?.summary ?? node.summary}</p>}
 
       <div className="mt-6 border-t border-white/15 pt-5">
         <h4 className="text-base font-semibold text-[#f3e7d3]">Direkte Beziehungen <span className="text-sm font-normal text-white/70">({neighborCount})</span></h4>
